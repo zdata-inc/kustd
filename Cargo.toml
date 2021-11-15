@@ -1,0 +1,30 @@
+[package]
+name = "kustd"
+version = "0.1.0"
+authors = ["Jess <jess@ros.io>"]
+edition = "2018"
+
+[[bin]]
+doc = false
+name = "kustd"
+path = "src/main.rs"
+
+[lib]
+name = "kustd"
+path = "src/lib.rs"
+
+[dependencies]
+thiserror = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.2.0"
+chrono = "0.4"
+futures = "0.3"
+tokio = { version = "1.13.0", features = ["rt", "macros"] }
+serde = "1.0.130"
+serde_json = "1.0"
+kube = { version = "0.63.2", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.13.1", default-features = false, features = ["v1_22"] }
+multimap = "0.8.3"
+
+[dev-dependencies]
+serde_yaml = "0.8.13"
