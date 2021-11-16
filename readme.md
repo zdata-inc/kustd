@@ -8,6 +8,9 @@ Installation
 ------------
 
 ```
+helm repo add kustd https://zdata-inc.github.io/kustd
+helm repo update
+helm upgrade --install --namespace kube-system kustd kustd/kustd
 ```
 
 Usage
