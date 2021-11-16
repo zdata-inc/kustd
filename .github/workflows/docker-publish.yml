@@ -1,8 +1,6 @@
 name: Docker
 
 on:
-  schedule:
-    - cron: '15 10 * * *'
   push:
     branches: [main,topic/ci]
     # Publish semver tags as releases.
@@ -27,6 +25,7 @@ jobs:
         uses: helm/kind-action@v1.2.0
       - name: Run tests
         run: cargo test --verbose
+
   build:
     needs: [test]
     runs-on: ubuntu-latest
@@ -64,3 +63,28 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  helm:
+    needs: [build]
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.4.0
+
+      - name: Run chart-releaser
+        uses: helm/chart-releaser-action@v1.2.1
+        env:
+          CR_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
