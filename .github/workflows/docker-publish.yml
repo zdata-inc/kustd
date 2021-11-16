@@ -24,7 +24,7 @@ jobs:
       - name: Create k8s Kind Cluster
         uses: helm/kind-action@v1.2.0
       - name: Run tests
-        run: cargo test --verbose
+        run: cargo test -- --nocapture
 
   build:
     needs: [test]
