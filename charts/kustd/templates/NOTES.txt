@@ -1,0 +1,4 @@
+Kustd is installed!
+
+Use the following annotation to sync secrets across namespaces:
+$ kustd.zdatainc.com/sync: ""
