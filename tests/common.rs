@@ -137,25 +137,26 @@ impl AsyncTestContext for K8sContext {
 
 pub async fn get_client() -> Client {
     let client = Client::try_default().await.expect("Failed to create client");
+    client
 
     // Ensure it's a minikube cluster, safeguard against running against the wrong context
-    match is_minikube(&client).await {
-        Ok(true) => client,
-        Ok(false) => {
-            eprintln!(concat!(
-                "Testing Kubernetes cluster must be minikube. This is to ensure tests aren't ",
-                "accidently run against the wrong context."));
-            panic!();
-        }
-        Err(err) => {
-            eprintln!(concat!(
-                "Testing Kubernetes cluster must be minikube. This is to ensure tests aren't ",
-                "accidently run against the wrong context."));
-            eprintln!(
-                "Error while attempting to validate test Kubernetes clusters is Minikube: {:?}", err);
-            panic!();
-        }
-    }
+    // match is_minikube(&client).await {
+    //     Ok(true) => client,
+    //     Ok(false) => {
+    //         eprintln!(concat!(
+    //             "Testing Kubernetes cluster must be minikube. This is to ensure tests aren't ",
+    //             "accidently run against the wrong context."));
+    //         panic!();
+    //     }
+    //     Err(err) => {
+    //         eprintln!(concat!(
+    //             "Testing Kubernetes cluster must be minikube. This is to ensure tests aren't ",
+    //             "accidently run against the wrong context."));
+    //         eprintln!(
+    //             "Error while attempting to validate test Kubernetes clusters is Minikube: {:?}", err);
+    //         panic!();
+    //     }
+    // }
 }
 
 async fn is_minikube(client: &Client) -> Result<bool, String> {
