@@ -4,10 +4,12 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use std::future::Future;
-use futures::{channel::mpsc, future::join, FutureExt, StreamExt};
+use either::Either;
+use futures::{future::join, FutureExt, StreamExt};
 use tracing::{debug, error, field, info, instrument, trace, warn, Span};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::sync::RwLock;
+use tokio::{sync::mpsc, sync::RwLock};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use chrono::prelude::*;
 use k8s_openapi::{Metadata, api::core::v1::{Namespace, ConfigMap, Secret}};
 use kube::{
@@ -128,9 +130,21 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
             r.annotations().get("kustd.zdatainc.com/origin.namespace") == Some(&namespace) &&
             r.namespace().map_or(false, |ns| !dest_namespaces.contains(&ns))
         }) {
-        Api::<T>::namespaced(client.clone(), &resource.namespace().expect("Resource must be namespaced"))
-            .delete(&resource.name(), &DeleteParams::default()).await.unwrap(); // TODO
-        info!("Deleted resource {}/{}", namespace, name);
+        let api = Api::<T>::namespaced(client.clone(), &resource.namespace().expect("Resource must be namespaced"));
+        match api.delete(&resource.name(), &DeleteParams::default()).await {
+            Ok(Either::Left(_)) => {
+                info!("Deleted resource {}/{}", namespace, name);
+            },
+            Ok(Either::Right(_)) => {
+                info!("Deleting resource {}/{}", namespace, name);
+            },
+            Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
+                warn!("Unable to cleanup syncronized resource {}/{}, it does not exist.", namespace, name);
+            }
+            Err(err) => {
+                error!("Unable to cleanup syncronized resource {}, {}, {:?}", namespace, name, err);
+            }
+        }
     }
 
     // Filter out current mappings for this resource
@@ -169,7 +183,20 @@ async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Resul
 
     for ns in dest_namespaces.iter() {
         let api: Api<T> = Api::namespaced_with(client.clone(), &ns.name(), &());
-        api.delete(&name, &DeleteParams::default()).await.map_err(Error::KubeError)?;
+        match api.delete(&name, &DeleteParams::default()).await {
+            Ok(Either::Left(_)) => {
+                info!("Deleted resource {}/{}", ns.name(), name);
+            },
+            Ok(Either::Right(_)) => {
+                info!("Deleting resource {}/{}", ns.name(), name);
+            },
+            Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
+                warn!("Unable to cleanup syncronized resource {}/{}, it does not exist.", ns.name(), name);
+            }
+            Err(err) => {
+                error!("Unable to cleanup syncronized resource {}, {}, {:?}", ns.name(), name, err);
+            }
+        }
     }
 
     info!("Cleaning up removed resource {}/{}", namespace, name);
@@ -199,16 +226,16 @@ impl Manager {
         let secrets = Api::<Secret>::all(client.clone());
         // let configmaps = Api::<ConfigMap>::all(client.clone);
 
-        let (ns_watcher_tx, ns_watcher_rx) = mpsc::unbounded();
+        let (ns_watcher_tx, ns_watcher_rx) = mpsc::unbounded_channel::<()>();
         let ns_watcher = async move {
             let tx = ns_watcher_tx.clone();
             watcher(Api::<Namespace>::all(client), ListParams::default()).for_each(|_| async {
-                tx.unbounded_send(()).unwrap();
+                tx.send(()); // Ignore errors
             }).await;
         };
 
         let drainer = Controller::new(secrets, ListParams::default())
-            .reconcile_all_on(ns_watcher_rx)
+            .reconcile_all_on(UnboundedReceiverStream::new(ns_watcher_rx))
             .shutdown_on_signal()
             .run(reconcile, error_policy, context)
             .filter_map(|x| async move { std::result::Result::ok(x) })
