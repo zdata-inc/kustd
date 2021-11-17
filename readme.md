@@ -100,6 +100,9 @@ Making a release
 ### Releasing an app update
 
 1. Bump `app_version` and `version` in `charts/kustd/Chart.yaml`
+    The chart's `version` should be bumped by in the same was as the
+    `app_version`. So minor changes of the app, should cause a minor change of
+    the chart, as an example.
 2. Commit with `Bump version v0.0.0` message on main
 3. Tag commit with version
 4. `git push --tags && git push`
