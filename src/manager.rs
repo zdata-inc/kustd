@@ -117,11 +117,7 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     debug!("Synchronizing resource {}/{}", namespace, name);
 
     let api_resource = ApiResource::erase::<T>(&());
-    let mut new_resource = DynamicObject::new(&name, &api_resource);
-    let annotations = new_resource.annotations_mut();
-    annotations.remove(KUSTD_SYNC_ANN);
-    annotations.insert(KUSTD_ORIGIN_NAME.to_owned(), name.clone());
-    annotations.insert(KUSTD_ORIGIN_NAMESPACE.to_owned(), namespace.clone());
+    let new_resource = managed_to_synced_resource(source_resource).await?;
 
     let dest_namespaces: Vec<_> = dest_namespaces_from_ann(client.clone(), source_resource).await?.iter().map(|ns| ns.name()).collect();
 
@@ -175,6 +171,20 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     }
 
     Ok(())
+}
+
+/// Takes a managed resource and returns a new synced resource
+async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<DynamicObject>
+    where T: Metadata<Ty=ObjectMeta> + Serialize + DeserializeOwned + Clone + Debug
+{
+    let name = source_resource.name();
+    let namespace = source_resource.namespace().expect("secret must be namespaced");
+    let api_resource = ApiResource::erase::<T>(&());
+    let mut new_resource = DynamicObject::new(&name, &api_resource);
+    new_resource.meta_mut().annotations = Some(source_resource.annotations().clone());
+    new_resource.meta_mut().labels = Some(source_resource.labels().clone());
+
+    Ok(new_resource)
 }
 
 async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Result<()>
