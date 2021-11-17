@@ -205,10 +205,10 @@ async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Resul
                 info!("Deleting resource {}/{}", ns.name(), name);
             },
             Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
-                warn!("Unable to cleanup syncronized resource {}/{}, it does not exist.", ns.name(), name);
+                warn!("Unable to cleanup synchronized resource {}/{}, it does not exist.", ns.name(), name);
             }
             Err(err) => {
-                error!("Unable to cleanup syncronized resource {}, {}, {:?}", ns.name(), name, err);
+                error!("Unable to cleanup synchronized resource {}, {}, {:?}", ns.name(), name, err);
             }
         }
     }
