@@ -1,6 +1,8 @@
 Kustd
 =====
 
+![Test & Build Workflow Badge](https://github.com/zdata-inc/kustd/actions/workflows/docker-publish.yml/badge.svg)
+
 Kustd is a simple Kubernetes operator which synchronizes secrets between
 namespaces.
 
