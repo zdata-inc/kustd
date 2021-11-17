@@ -114,7 +114,7 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
 
     let name = source_resource.name();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
-    debug!("Syncronizing resource {}/{}", namespace, name);
+    debug!("Synchronizing resource {}/{}", namespace, name);
 
     let api_resource = ApiResource::erase::<T>(&());
     let mut new_resource = DynamicObject::new(&name, &api_resource);
@@ -143,10 +143,10 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
                 info!("Deleting resource {}/{}", namespace, name);
             },
             Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
-                warn!("Unable to cleanup syncronized resource {}/{}, it does not exist.", namespace, name);
+                warn!("Unable to cleanup synchronized resource {}/{}, it does not exist.", namespace, name);
             }
             Err(err) => {
-                error!("Unable to cleanup syncronized resource {}, {}, {:?}", namespace, name, err);
+                error!("Unable to cleanup synchronized resource {}, {}, {:?}", namespace, name, err);
             }
         }
     }
