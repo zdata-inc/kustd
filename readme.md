@@ -84,6 +84,13 @@ kubectl delete secret test
 kubectl delete ns prod-backend prod-frontend
 ```
 
+Available annotations
+---------------------
+
+`kustd.zdatainc.com/sync` - Specify namespace labels to sync resource to
+`kustd.zdatainc.com/remove-annotations` - Comma separated list of annotations to remove from synced resource
+`kustd.zdatainc.com/remove-labels` - Comma separated list of labels to remove from synced resource
+
 
 Making a release
 ----------------
