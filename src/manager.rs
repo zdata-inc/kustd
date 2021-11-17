@@ -26,6 +26,12 @@ use kube::{
 
 use super::{Result, Error};
 
+const KUSTD_ORIGIN_NAME: &str = "kustd.zdatainc.com/origin.name";
+const KUSTD_ORIGIN_NAMESPACE: &str = "kustd.zdatainc.com/origin.namespace";
+const KUSTD_SYNC_ANN: &str = "kustd.zdatainc.com/sync";
+const KUSTD_REMOVE_ANN_ANN: &str = "kustd.zdatainc.com/remove-annotations";
+const KUSTD_REMOVE_LABELS_ANN: &str = "kustd.zdatainc.com/remove-labels";
+
 struct Data {
     client: Client,
     state: Arc<RwLock<State>>
@@ -62,7 +68,7 @@ async fn reconcile(resource: Secret, ctx: Context<Data>) -> Result<ReconcilerAct
     let name = resource.name();
     let namespace = resource.namespace().expect("secret must be namespaced");
 
-    if !resource.annotations().contains_key("kustd.zdatainc.com/sync") {
+    if !resource.annotations().contains_key(KUSTD_SYNC_ANN) {
         debug!("Skipping resource, no sync annotation {}/{}", namespace, name);
         return Ok(ReconcilerAction { requeue_after: None });
     }
@@ -88,7 +94,7 @@ async fn dest_namespaces_from_ann<T>(client: Client, resource: &T) -> Result<Vec
 {
     let name = resource.name();
     let namespace = resource.namespace().expect("secret must be namespaced");
-    let selector = resource.annotations().get("kustd.zdatainc.com/sync").expect("Can't accept resource without sync annotation.");
+    let selector = resource.annotations().get(KUSTD_SYNC_ANN).expect("Can't accept resource without sync annotation.");
 
     let api: Api<Namespace> = Api::all(client);
     let mut params = ListParams::default();
@@ -110,14 +116,10 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
 
     let name = source_resource.name();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
-    debug!("Syncronizing resource {}/{}", namespace, name);
+    debug!("Synchronizing resource {}/{}", namespace, name);
 
     let api_resource = ApiResource::erase::<T>(&());
-    let mut new_resource = DynamicObject::new(&name, &api_resource);
-    let annotations = new_resource.annotations_mut();
-    annotations.remove("kustd.zdatainc.com/sync".into());
-    annotations.insert("kustd.zdatainc.com/origin.name".into(), name.clone());
-    annotations.insert("kustd.zdatainc.com/origin.namespace".into(), namespace.clone());
+    let new_resource = managed_to_synced_resource(source_resource).await?;
 
     let dest_namespaces: Vec<_> = dest_namespaces_from_ann(client.clone(), source_resource).await?.iter().map(|ns| ns.name()).collect();
 
@@ -126,8 +128,8 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     for resource in Api::<T>::all(client.clone())
         .list(&ListParams::default()).await
         .map_err(Error::KubeError)?.iter().filter(|r| {
-            r.annotations().get("kustd.zdatainc.com/origin.name") == Some(&name) &&
-            r.annotations().get("kustd.zdatainc.com/origin.namespace") == Some(&namespace) &&
+            r.annotations().get(KUSTD_ORIGIN_NAME) == Some(&name) &&
+            r.annotations().get(KUSTD_ORIGIN_NAMESPACE) == Some(&namespace) &&
             r.namespace().map_or(false, |ns| !dest_namespaces.contains(&ns))
         }) {
         let api = Api::<T>::namespaced(client.clone(), &resource.namespace().expect("Resource must be namespaced"));
@@ -139,10 +141,10 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
                 info!("Deleting resource {}/{}", namespace, name);
             },
             Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
-                warn!("Unable to cleanup syncronized resource {}/{}, it does not exist.", namespace, name);
+                warn!("Unable to cleanup synchronized resource {}/{}, it does not exist.", namespace, name);
             }
             Err(err) => {
-                error!("Unable to cleanup syncronized resource {}, {}, {:?}", namespace, name, err);
+                error!("Unable to cleanup synchronized resource {}, {}, {:?}", namespace, name, err);
             }
         }
     }
@@ -173,6 +175,44 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     Ok(())
 }
 
+/// Takes a managed resource and returns a new synced resource
+async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<DynamicObject>
+    where T: Metadata<Ty=ObjectMeta> + Serialize + DeserializeOwned + Clone + Debug
+{
+    let name = source_resource.name();
+    let namespace = source_resource.namespace().expect("secret must be namespaced");
+    let api_resource = ApiResource::erase::<T>(&());
+    let mut new_resource = DynamicObject::new(&name, &api_resource);
+    new_resource.meta_mut().annotations = Some(source_resource.annotations().clone());
+    new_resource.meta_mut().labels = Some(source_resource.labels().clone());
+
+    // Remove annotations
+    {
+        let annotations = new_resource.annotations_mut();
+        annotations.remove(KUSTD_SYNC_ANN);
+        annotations.insert(KUSTD_ORIGIN_NAME.to_owned(), name.clone());
+        annotations.insert(KUSTD_ORIGIN_NAMESPACE.to_owned(), namespace.clone());
+
+        // Remove annotations
+        if let Some(keys) = annotations.get(KUSTD_REMOVE_ANN_ANN).cloned() {
+            for key in keys.split(",") {
+                annotations.remove(key.trim());
+            }
+        }
+    }
+
+    // Remove labels
+    let remove_labels_ann = new_resource.annotations().get(KUSTD_REMOVE_LABELS_ANN).cloned();
+    let labels = new_resource.labels_mut();
+    if let Some(keys) = remove_labels_ann {
+        for key in keys.split(",") {
+            labels.remove(key.trim());
+        }
+    }
+
+    Ok(new_resource)
+}
+
 async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Result<()>
     where T: Metadata<Ty=ObjectMeta> + Serialize + DeserializeOwned + Clone + Debug
 {
@@ -191,10 +231,10 @@ async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Resul
                 info!("Deleting resource {}/{}", ns.name(), name);
             },
             Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
-                warn!("Unable to cleanup syncronized resource {}/{}, it does not exist.", ns.name(), name);
+                warn!("Unable to cleanup synchronized resource {}/{}, it does not exist.", ns.name(), name);
             }
             Err(err) => {
-                error!("Unable to cleanup syncronized resource {}, {}, {:?}", ns.name(), name, err);
+                error!("Unable to cleanup synchronized resource {}, {}, {:?}", ns.name(), name, err);
             }
         }
     }

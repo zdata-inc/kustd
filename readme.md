@@ -1,7 +1,7 @@
 Kustd
 =====
 
-Kustd is a simple Kubernetes operator which syncronizes secrets between
+Kustd is a simple Kubernetes operator which synchronizes secrets between
 namespaces.
 
 Installation
@@ -37,7 +37,7 @@ metadata:
     tier: backend
 EOF
 
-# Create a syncronized secret
+# Create a synchronized secret
 cat <<'EOF' | kubectl apply -f -
 ---
 apiVersion: v1
@@ -52,7 +52,7 @@ stringData:
   password: supersecret!
 EOF
 
-# See it's automatically syncronized to prod-frontend and prod-backend!
+# See it's automatically synchronized to prod-frontend and prod-backend!
 # The secret also has some extra useful annotations
 kubectl -n prod-frontend get secrets test -o yaml
 > metadata:
@@ -83,3 +83,20 @@ kubectl -n prod-frontend get secrets test -o yaml
 kubectl delete secret test
 kubectl delete ns prod-backend prod-frontend
 ```
+
+
+Making a release
+----------------
+
+### Releasing an app update
+
+1. Bump `app_version` in `charts/kustd/Chart.yaml`
+2. Commit with `Bump version v0.0.0` message on main
+3. Tag commit with version
+4. `git push --tags && git push`
+
+### Releasing a chart update
+
+1. Bump `version in `charts/kustd/Chart.yaml`
+2. Commit with `Bump chart version v0.0.0` message on main
+3. `git push`
