@@ -87,9 +87,9 @@ kubectl delete ns prod-backend prod-frontend
 Available annotations
 ---------------------
 
-`kustd.zdatainc.com/sync` - Specify namespace labels to sync resource to
-`kustd.zdatainc.com/remove-annotations` - Comma separated list of annotations to remove from synced resource
-`kustd.zdatainc.com/remove-labels` - Comma separated list of labels to remove from synced resource
+`kustd.zdatainc.com/sync` - Specify namespace labels to sync resource to  
+`kustd.zdatainc.com/remove-annotations` - Comma separated list of annotations to remove from synced resource  
+`kustd.zdatainc.com/remove-labels` - Comma separated list of labels to remove from synced resource  
 
 
 Making a release
@@ -97,12 +97,12 @@ Making a release
 
 ### Releasing an app update
 
-1. Bump `app_version` in `charts/kustd/Chart.yaml`
+1. Bump `app_version` and `version` in `charts/kustd/Chart.yaml`
 2. Commit with `Bump version v0.0.0` message on main
 3. Tag commit with version
 4. `git push --tags && git push`
 
-### Releasing a chart update
+### Releasing just a chart update
 
 1. Bump `version in `charts/kustd/Chart.yaml`
 2. Commit with `Bump chart version v0.0.0` message on main
