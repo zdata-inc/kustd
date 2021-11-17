@@ -29,6 +29,8 @@ use super::{Result, Error};
 const KUSTD_ORIGIN_NAME: &str = "kustd.zdatainc.com/origin.name";
 const KUSTD_ORIGIN_NAMESPACE: &str = "kustd.zdatainc.com/origin.namespace";
 const KUSTD_SYNC_ANN: &str = "kustd.zdatainc.com/sync";
+const KUSTD_REMOVE_ANN_ANN: &str = "kustd.zdatainc.com/remove-annotations";
+const KUSTD_REMOVE_LABELS_ANN: &str = "kustd.zdatainc.com/remove-labels";
 
 struct Data {
     client: Client,
@@ -183,6 +185,30 @@ async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<DynamicObj
     let mut new_resource = DynamicObject::new(&name, &api_resource);
     new_resource.meta_mut().annotations = Some(source_resource.annotations().clone());
     new_resource.meta_mut().labels = Some(source_resource.labels().clone());
+
+    // Remove annotations
+    {
+        let annotations = new_resource.annotations_mut();
+        annotations.remove(KUSTD_SYNC_ANN);
+        annotations.insert(KUSTD_ORIGIN_NAME.to_owned(), name.clone());
+        annotations.insert(KUSTD_ORIGIN_NAMESPACE.to_owned(), namespace.clone());
+
+        // Remove annotations
+        if let Some(keys) = annotations.get(KUSTD_REMOVE_ANN_ANN).cloned() {
+            for key in keys.split(",") {
+                annotations.remove(key.trim());
+            }
+        }
+    }
+
+    // Remove labels
+    let remove_labels_ann = new_resource.annotations().get(KUSTD_REMOVE_LABELS_ANN).cloned();
+    let labels = new_resource.labels_mut();
+    if let Some(keys) = remove_labels_ann {
+        for key in keys.split(",") {
+            labels.remove(key.trim());
+        }
+    }
 
     Ok(new_resource)
 }

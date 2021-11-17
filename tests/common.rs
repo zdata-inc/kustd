@@ -12,7 +12,7 @@ use kube::{
 };
 use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Pod, Secret};
 use serde_yaml::Value as YamlValue;
-use serde_json::json;
+use serde_json::{json, Value as JsonValue};
 use tokio::time;
 
 use test_context::AsyncTestContext;
