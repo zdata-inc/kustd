@@ -26,6 +26,10 @@ use kube::{
 
 use super::{Result, Error};
 
+const KUSTD_ORIGIN_NAME: &str = "kustd.zdatainc.com/origin.name";
+const KUSTD_ORIGIN_NAMESPACE: &str = "kustd.zdatainc.com/origin.namespace";
+const KUSTD_SYNC_ANN: &str = "kustd.zdatainc.com/sync";
+
 struct Data {
     client: Client,
     state: Arc<RwLock<State>>
@@ -62,7 +66,7 @@ async fn reconcile(resource: Secret, ctx: Context<Data>) -> Result<ReconcilerAct
     let name = resource.name();
     let namespace = resource.namespace().expect("secret must be namespaced");
 
-    if !resource.annotations().contains_key("kustd.zdatainc.com/sync") {
+    if !resource.annotations().contains_key(KUSTD_SYNC_ANN) {
         debug!("Skipping resource, no sync annotation {}/{}", namespace, name);
         return Ok(ReconcilerAction { requeue_after: None });
     }
@@ -88,7 +92,7 @@ async fn dest_namespaces_from_ann<T>(client: Client, resource: &T) -> Result<Vec
 {
     let name = resource.name();
     let namespace = resource.namespace().expect("secret must be namespaced");
-    let selector = resource.annotations().get("kustd.zdatainc.com/sync").expect("Can't accept resource without sync annotation.");
+    let selector = resource.annotations().get(KUSTD_SYNC_ANN).expect("Can't accept resource without sync annotation.");
 
     let api: Api<Namespace> = Api::all(client);
     let mut params = ListParams::default();
@@ -115,9 +119,9 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     let api_resource = ApiResource::erase::<T>(&());
     let mut new_resource = DynamicObject::new(&name, &api_resource);
     let annotations = new_resource.annotations_mut();
-    annotations.remove("kustd.zdatainc.com/sync".into());
-    annotations.insert("kustd.zdatainc.com/origin.name".into(), name.clone());
-    annotations.insert("kustd.zdatainc.com/origin.namespace".into(), namespace.clone());
+    annotations.remove(KUSTD_SYNC_ANN);
+    annotations.insert(KUSTD_ORIGIN_NAME.to_owned(), name.clone());
+    annotations.insert(KUSTD_ORIGIN_NAMESPACE.to_owned(), namespace.clone());
 
     let dest_namespaces: Vec<_> = dest_namespaces_from_ann(client.clone(), source_resource).await?.iter().map(|ns| ns.name()).collect();
 
@@ -126,8 +130,8 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     for resource in Api::<T>::all(client.clone())
         .list(&ListParams::default()).await
         .map_err(Error::KubeError)?.iter().filter(|r| {
-            r.annotations().get("kustd.zdatainc.com/origin.name") == Some(&name) &&
-            r.annotations().get("kustd.zdatainc.com/origin.namespace") == Some(&namespace) &&
+            r.annotations().get(KUSTD_ORIGIN_NAME) == Some(&name) &&
+            r.annotations().get(KUSTD_ORIGIN_NAMESPACE) == Some(&namespace) &&
             r.namespace().map_or(false, |ns| !dest_namespaces.contains(&ns))
         }) {
         let api = Api::<T>::namespaced(client.clone(), &resource.namespace().expect("Resource must be namespaced"));
