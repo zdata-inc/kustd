@@ -35,7 +35,7 @@ async fn test_sync_secret(ctx: &mut K8sContext) {
     let ns2_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns2.name());
 
     // Test creating secret
-    let secret = ns1_secrets.create(&PostParams::default(), &ctx.empty_synced_secret("test", "test1", "loc=b")).await.unwrap();
+    let secret = &ctx.secret("test").sync_selector("loc=b").create(&ns1_secrets).await.unwrap();
     time::sleep(Duration::from_millis(100)).await;
     ns2_secrets.get(&secret.name()).await.unwrap();
 
@@ -93,7 +93,7 @@ async fn test_sync_ns(ctx: &mut K8sContext) {
     let ns2_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns2.name());
     let ns3_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ctx.mangle_name("test3"));
 
-    let secret = ns1_secrets.create(&PostParams::default(), &ctx.empty_synced_secret("test", "test1", "loc=b")).await.unwrap();
+    let secret = ctx.secret("test").sync_selector("loc=b").create(&ns1_secrets).await.unwrap();
     time::sleep(Duration::from_millis(100)).await;
     ns2_secrets.get(&secret.name()).await.unwrap();
 
@@ -133,4 +133,45 @@ async fn test_sync_ns(ctx: &mut K8sContext) {
         ns3_secrets.get(&secret.name()).await,
         Ok(_)
     ));
+}
+
+#[test_context(K8sContext)]
+#[tokio::test]
+#[serial]
+async fn test_sync_remove_ann_labels(ctx: &mut K8sContext) {
+    let ns1 = ctx.create_namespace("test1", "loc=a").await;
+    let ns2 = ctx.create_namespace("test2", "loc=b").await;
+
+    let ns1_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns1.name());
+    let ns2_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns2.name());
+
+    let secret = ctx.secret("test").sync_selector("loc=b")
+        .patch(&json!({
+            "metadata": {
+                "annotations": {
+                    "kustd.zdatainc.com/remove-annotations": "test1,test2",
+                    "kustd.zdatainc.com/remove-labels": "test1,test2",
+                    "test1": "test1",
+                    "test2": "test2",
+                    "test3": "test3",
+                },
+                "labels": {
+                    "test1": "test1",
+                    "test2": "test2",
+                    "test3": "test3",
+                }
+            }
+        }))
+        .create(&ns1_secrets).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    let synced_secret = ns2_secrets.get(&secret.name()).await.unwrap();
+    let annotations = synced_secret.annotations();
+    assert_eq!(annotations.get("test1"), None);
+    assert_eq!(annotations.get("test2"), None);
+    assert_eq!(annotations.get("test3"), Some(&"test3".to_owned()));
+
+    let labels = synced_secret.labels();
+    assert_eq!(labels.get("test1"), None);
+    assert_eq!(labels.get("test2"), None);
+    assert_eq!(labels.get("test3"), Some(&"test3".to_owned()));
 }

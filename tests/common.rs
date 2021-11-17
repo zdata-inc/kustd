@@ -71,18 +71,8 @@ impl K8sContext {
         ns
     }
 
-    pub fn empty_synced_secret(&mut self, name: &str, namespace: &str, sync_selector: &str) -> Secret {
-        Secret::from(serde_json::from_value(json!({
-            "apiVersion": "v1",
-            "kind": "Secret",
-            "metadata": {
-                "name": self.mangle_name(name),
-                "namespace": self.mangle_name(namespace),
-                "annotations": {
-                    "kustd.zdatainc.com/sync": sync_selector,
-                }
-            }
-        })).unwrap())
+    pub fn secret(&self, name: &str) -> SecretBuilder {
+        SecretBuilder::new().name(name)
     }
 
     pub fn mangle_name(&self, suffix: &str) -> String {
@@ -135,6 +125,53 @@ impl AsyncTestContext for K8sContext {
     }
 }
 
+pub struct SecretBuilder {
+    json: JsonValue,
+}
+
+impl SecretBuilder {
+    pub fn new() -> Self {
+        Self {
+            json: json!({
+                "apiVersion": "v1",
+                "kind": "Secret"
+            }),
+        }
+    }
+
+    pub fn name(mut self, name: &str) -> Self {
+        merge_json(&mut self.json, &json!({
+            "metadata": {
+                "name": name.to_owned(),
+            }
+        }));
+        self
+    }
+
+    pub fn sync_selector(mut self, sync_selector: &str) -> Self {
+        merge_json(&mut self.json, &json!({
+            "metadata": {
+                "annotations": {
+                    "kustd.zdatainc.com/sync": sync_selector
+                }
+            }
+        }));
+        self
+    }
+
+    pub fn patch(mut self, patch: &JsonValue) -> Self {
+        merge_json(&mut self.json, patch);
+        self
+    }
+
+    pub fn make(self) -> Secret {
+        Secret::from(serde_json::from_value(self.json).unwrap())
+    }
+    pub async fn create(self, api: &Api<Secret>) -> Result<Secret, kube::Error> {
+        api.create(&PostParams::default(), &self.make()).await
+    }
+}
+
 pub async fn get_client() -> Client {
     let client = Client::try_default().await.expect("Failed to create client");
     client
@@ -157,6 +194,19 @@ pub async fn get_client() -> Client {
     //         panic!();
     //     }
     // }
+}
+
+fn merge_json(a: &mut JsonValue, b: &JsonValue) {
+    match (a, b) {
+        (&mut JsonValue::Object(ref mut a), &JsonValue::Object(ref b)) => {
+            for (k, v) in b {
+                merge_json(a.entry(k.clone()).or_insert(JsonValue::Null), v);
+            }
+        }
+        (a, b) => {
+            *a = b.clone();
+        }
+    }
 }
 
 async fn is_minikube(client: &Client) -> Result<bool, String> {
