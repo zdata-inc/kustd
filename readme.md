@@ -83,3 +83,20 @@ kubectl -n prod-frontend get secrets test -o yaml
 kubectl delete secret test
 kubectl delete ns prod-backend prod-frontend
 ```
+
+
+Making a release
+----------------
+
+### Releasing an app update
+
+1. Bump `app_version` in `charts/kustd/Chart.yaml`
+2. Commit with `Bump version v0.0.0` message on main
+3. Tag commit with version
+4. `git push --tags && git push`
+
+### Releasing a chart update
+
+1. Bump `version in `charts/kustd/Chart.yaml`
+2. Commit with `Bump chart version v0.0.0` message on main
+3. `git push`
