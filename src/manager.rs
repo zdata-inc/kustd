@@ -24,6 +24,7 @@ use kube::{
     },
 };
 
+use crate::syncable::Syncable;
 use super::{Result, Error};
 
 const KUSTD_ORIGIN_NAME: &str = "kustd.zdatainc.com/origin.name";
@@ -110,7 +111,7 @@ async fn dest_namespaces_from_ann<T>(client: Client, resource: &T) -> Result<Vec
 }
 
 async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()>
-    where T: Metadata<Ty=ObjectMeta> + Serialize + DeserializeOwned + Clone + Debug
+    where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
     let client = ctx.get_ref().client.clone();
 
@@ -118,7 +119,6 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     let namespace = source_resource.namespace().expect("secret must be namespaced");
     debug!("Synchronizing resource {}/{}", namespace, name);
 
-    let api_resource = ApiResource::erase::<T>(&());
     let new_resource = managed_to_synced_resource(source_resource).await?;
 
     let dest_namespaces: Vec<_> = dest_namespaces_from_ann(client.clone(), source_resource).await?.iter().map(|ns| ns.name()).collect();
@@ -151,7 +151,7 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
 
     // Filter out current mappings for this resource
     for dest_ns in dest_namespaces {
-        let api = Api::namespaced_with(client.clone(), &dest_ns, &api_resource);
+        let api = Api::<T>::namespaced(client.clone(), &dest_ns);
         match api.get(&name).await {
             // Update
             Ok(_) => {
@@ -176,15 +176,16 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
 }
 
 /// Takes a managed resource and returns a new synced resource
-async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<DynamicObject>
-    where T: Metadata<Ty=ObjectMeta> + Serialize + DeserializeOwned + Clone + Debug
+async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<T>
+    where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
     let name = source_resource.name();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
-    let api_resource = ApiResource::erase::<T>(&());
-    let mut new_resource = DynamicObject::new(&name, &api_resource);
-    new_resource.meta_mut().annotations = Some(source_resource.annotations().clone());
-    new_resource.meta_mut().labels = Some(source_resource.labels().clone());
+
+    let mut new_resource = source_resource.duplicate();
+
+    // Remove namespace
+    new_resource.meta_mut().namespace = None;
 
     // Remove annotations
     {

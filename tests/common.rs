@@ -159,6 +159,11 @@ impl SecretBuilder {
         self
     }
 
+    pub fn data(mut self, data: &JsonValue) -> Self {
+        merge_json(&mut self.json, &json!({ "stringData": data }));
+        self
+    }
+
     pub fn patch(mut self, patch: &JsonValue) -> Self {
         merge_json(&mut self.json, patch);
         self
