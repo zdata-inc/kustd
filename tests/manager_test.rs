@@ -101,7 +101,6 @@ async fn test_sync_ns(ctx: &mut K8sContext) {
     let ns3 = ctx.create_namespace("test3", "loc=b").await;
     time::sleep(Duration::from_millis(250)).await;
     assert!(matches!(ns3_secrets.get(&secret.name()).await, Ok(_)));
-    println!("A");
 
     // Test updating NS to delete secret
     namespaces.patch(&ns3.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
@@ -119,7 +118,6 @@ async fn test_sync_ns(ctx: &mut K8sContext) {
         Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
     ));
 
-    println!("B");
     // Test updating NS to create secret
     namespaces.patch(&ns3.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
         "apiVersion": "v1",
@@ -135,5 +133,4 @@ async fn test_sync_ns(ctx: &mut K8sContext) {
         ns3_secrets.get(&secret.name()).await,
         Ok(_)
     ));
-    println!("C");
 }
