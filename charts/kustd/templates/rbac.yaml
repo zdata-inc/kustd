@@ -1,4 +1,5 @@
 {{- if .Values.rbac.create -}}
+---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -9,4 +10,29 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kustd.serviceAccountName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "kustd.serviceAccountName" . }}
+  namespace: kube-system
+roleRef:
+  kind: ClusterRole
+  name: {{ include "kustd.serviceAccountName" . }}
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kustd
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  verbs: ["get", "watch", "list"]
+- apiGroups: [""]
+  resources: ["secrets", "configmaps"]
+  verbs: ["get", "watch", "list", "create", "update", "patch", "delete"]
 {{- end }}
