@@ -1,6 +1,6 @@
 [package]
 name = "kustd"
-version = "0.3.1"
+version = "0.4.0"
 authors = ["Jess <jess@ros.io>"]
 edition = "2018"
 
