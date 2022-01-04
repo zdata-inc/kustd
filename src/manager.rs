@@ -175,7 +175,7 @@ async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()
     Ok(())
 }
 
-/// Takes a managed resource and returns a new synced resource
+/// Converts a managed resource into a syncable resource
 async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<T>
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
@@ -245,7 +245,7 @@ async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Resul
 }
 
 fn error_policy(error: &Error, _ctx: Context<Data>) -> ReconcilerAction {
-    warn!("reconcile failed: {:?}", error);
+    warn!("Reconcile failed: {:?}", error);
     ReconcilerAction {
         requeue_after: Some(Duration::from_secs(60 * 5)),
     }
