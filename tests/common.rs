@@ -139,7 +139,6 @@ impl<T> ResourceBuilder<T>
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
     pub fn new() -> Self {
-        println!("HIDER: {:?}", T::KIND);
         ResourceBuilder {
             json: json!({
                 "apiVersion": "v1",
