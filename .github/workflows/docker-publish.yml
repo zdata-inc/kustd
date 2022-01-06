@@ -26,8 +26,54 @@ jobs:
       - name: Run tests
         run: cargo test -- --nocapture
 
+  e2e_test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Helm
+        uses: azure/setup-helm@v1
+        with:
+          version: v3.4.0
+      - name: Install Krew
+        run: |
+          set -x; cd "$(mktemp -d)" &&
+          OS="$(uname | tr '[:upper:]' '[:lower:]')" &&
+          ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" &&
+          KREW="krew-${OS}_${ARCH}" &&
+          curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" &&
+          tar zxvf "${KREW}.tar.gz" &&
+          ./"${KREW}" install krew
+          echo "${KREW_ROOT:-$HOME/.krew}/bin:$PATH" >> $GITHUB_PATH
+
+      - name: Install Kuttl
+        run: kubectl krew install kuttl
+
+      - uses: actions/checkout@v2
+      - name: Create k8s Kind Cluster
+        uses: helm/kind-action@v1.2.0
+
+      - name: Build Docker image
+        uses: docker/build-push-action@ad44023a93711e3deb337508980b4b5e9bcdc5dc
+        with:
+          tags: kustd:latest
+          context: .
+      - name: Upload image to Kind
+        run: kind load docker-image --name chart-testing kustd:latest
+
+      - name: Create values.yml
+        run: |
+          cat <<'EOF' > values.yml
+          image:
+            repository: kustd
+            pullPolicy: Never
+            tag: latest
+          EOF
+      - name: Install chart
+        run: helm install -f values.yml --namespace kube-system kustd ./charts/kustd
+      - name: Run E2E tests
+        run: kubectl kuttl test tests/e2e
+
   build:
-    needs: [test]
+    needs: [test, e2e_test]
     runs-on: ubuntu-latest
     permissions:
       contents: read
