@@ -1,0 +1,12 @@
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kustd-sync-configmap-test
+  namespace: kustd-test-next
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kustd-sync-secret-test
+  namespace: kustd-test-next

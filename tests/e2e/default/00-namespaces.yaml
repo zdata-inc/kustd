@@ -1,0 +1,21 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kustd-test-a
+  labels:
+    loc: a
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kustd-test-b
+  labels:
+    loc: b
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kustd-test-c
+  labels:
+    loc: c
