@@ -1,25 +1,23 @@
-#![allow(unused_imports)]
 use std::iter::FromIterator;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
 use std::future::Future;
 use either::Either;
-use futures::{future::join, FutureExt, StreamExt};
-use tracing::{debug, error, field, info, instrument, trace, warn, Span};
+use futures::{future::join3, FutureExt, StreamExt};
+use tracing::{debug, error, info, instrument, warn};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::{sync::mpsc, sync::RwLock};
-use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio::sync::RwLock;
+use async_broadcast::broadcast;
 use chrono::prelude::*;
 use k8s_openapi::{Metadata, api::core::v1::{Namespace, ConfigMap, Secret}};
 use kube::{
-    api::{Api, ApiResource, DynamicObject, ListParams, DeleteParams, PostParams, ObjectList, ObjectMeta, Resource, ResourceExt},
+    api::{Api, ListParams, DeleteParams, PostParams, ObjectMeta, Resource, ResourceExt},
     client::Client,
     runtime::{
         controller::{Context, Controller, ReconcilerAction},
         events::Reporter,
         finalizer::{finalizer, Event},
-        utils::try_flatten_applied,
         watcher,
     },
 };
@@ -56,7 +54,9 @@ impl State {
 }
 
 #[instrument(skip(resource, ctx), fields(trace_id))]
-async fn reconcile(resource: Secret, ctx: Context<Data>) -> Result<ReconcilerAction> {
+async fn reconcile<T>(resource: T, ctx: Context<Data>) -> Result<ReconcilerAction>
+    where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
+{
     let client = ctx.get_ref().client.clone();
     ctx.get_ref().state.write().await.last_event = Utc::now();
 
@@ -67,7 +67,7 @@ async fn reconcile(resource: Secret, ctx: Context<Data>) -> Result<ReconcilerAct
     // let secrets: Api<Secret> = Api::namespaced(client.clone(), &namespace);
 
     let name = resource.name();
-    let namespace = resource.namespace().expect("secret must be namespaced");
+    let namespace = resource.namespace().expect("Secret must be namespaced");
 
     if !resource.annotations().contains_key(KUSTD_SYNC_ANN) {
         debug!("Skipping resource, no sync annotation {}/{}", namespace, name);
@@ -75,11 +75,20 @@ async fn reconcile(resource: Secret, ctx: Context<Data>) -> Result<ReconcilerAct
     }
 
     debug!("Reconciling resource {}/{}", namespace, name);
-    let api: Api<Secret> = Api::namespaced(client.clone(), &namespace);
+
+    reconcile_resource(client.clone(), resource).await
+}
+
+async fn reconcile_resource<T>(client: Client, resource: T) -> Result<ReconcilerAction>
+    where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
+{
+    let namespace = resource.namespace().expect("resource must be namespaced");
+
+    let api: Api<T> = Api::namespaced(client.clone(), &namespace);
     Ok(finalizer(&api, "kustd.zdatainc.com/cleanup", resource, |event| async {
         match event {
             Event::Apply(resource) => {
-                sync_resource(&ctx, &resource).await?;
+                sync_resource(client.clone(), &resource).await?;
                 Result::<_, Error>::Ok(ReconcilerAction { requeue_after: Some(Duration::from_secs(60 * 60)) })
             }
             Event::Cleanup(resource) => {
@@ -90,7 +99,8 @@ async fn reconcile(resource: Secret, ctx: Context<Data>) -> Result<ReconcilerAct
     }).await.unwrap())
 }
 
-async fn dest_namespaces_from_ann<T>(client: Client, resource: &T) -> Result<Vec<Namespace>>
+/// Given a resource, return the namespaces it should be synchronized into.
+async fn destination_namespaces<T>(client: Client, resource: &T) -> Result<Vec<Namespace>>
     where T: Metadata<Ty=ObjectMeta>
 {
     let name = resource.name();
@@ -110,18 +120,16 @@ async fn dest_namespaces_from_ann<T>(client: Client, resource: &T) -> Result<Vec
     Ok(Vec::<Namespace>::from_iter(result))
 }
 
-async fn sync_resource<T>(ctx: &Context<Data>, source_resource: &T) -> Result<()>
+async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
-    let client = ctx.get_ref().client.clone();
-
     let name = source_resource.name();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
     debug!("Synchronizing resource {}/{}", namespace, name);
 
     let new_resource = managed_to_synced_resource(source_resource).await?;
 
-    let dest_namespaces: Vec<_> = dest_namespaces_from_ann(client.clone(), source_resource).await?.iter().map(|ns| ns.name()).collect();
+    let dest_namespaces: Vec<_> = destination_namespaces(client.clone(), source_resource).await?.iter().map(|ns| ns.name()).collect();
 
     // Find all synced copies, delete any not in dest_namespaces
     // TODO - Replace with searching controller store?
@@ -220,7 +228,7 @@ async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Resul
     let name = source_resource.name();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
 
-    let dest_namespaces = dest_namespaces_from_ann(client.clone(), source_resource).await?;
+    let dest_namespaces = destination_namespaces(client.clone(), source_resource).await?;
 
     for ns in dest_namespaces.iter() {
         let api: Api<T> = Api::namespaced_with(client.clone(), &ns.name(), &());
@@ -256,7 +264,7 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub async fn new() -> (Self, impl Future<Output = ((),())>) {
+    pub async fn new() -> (Self, impl Future<Output = ((),(), ())>) {
         let client = Client::try_default().await.expect("Failed to create client");
         let state = Arc::new(RwLock::new(State::new()));
         let context = Context::new(Data {
@@ -264,26 +272,39 @@ impl Manager {
             state: state.clone(),
         });
 
+        let (ns_watcher_tx, ns_watcher_rx) = broadcast(2);
+        let ns_watcher = {
+            let client = client.clone();
+            async move {
+                let tx = ns_watcher_tx.clone();
+                watcher(Api::<Namespace>::all(client), ListParams::default()).for_each(|_| async {
+                    tx.broadcast(()).await.expect("Failed to reconcile on namespace change");
+                }).await;
+            }
+        };
+
         let secrets = Api::<Secret>::all(client.clone());
         // let configmaps = Api::<ConfigMap>::all(client.clone);
 
-        let (ns_watcher_tx, ns_watcher_rx) = mpsc::unbounded_channel::<()>();
-        let ns_watcher = async move {
-            let tx = ns_watcher_tx.clone();
-            watcher(Api::<Namespace>::all(client), ListParams::default()).for_each(|_| async {
-                tx.send(()); // Ignore errors
-            }).await;
-        };
+        let secret_drainer = Controller::new(secrets, ListParams::default())
+            .reconcile_all_on(ns_watcher_rx.clone())
+            .shutdown_on_signal()
+            .run(reconcile, error_policy, context.clone())
+            .filter_map(|x| async move { std::result::Result::ok(x) })
+            .for_each(|_| futures::future::ready(()))
+            .boxed();
 
-        let drainer = Controller::new(secrets, ListParams::default())
-            .reconcile_all_on(UnboundedReceiverStream::new(ns_watcher_rx))
+        let configmaps = Api::<ConfigMap>::all(client.clone());
+
+        let configmap_drainer = Controller::new(configmaps, ListParams::default())
+            .reconcile_all_on(ns_watcher_rx)
             .shutdown_on_signal()
             .run(reconcile, error_policy, context)
             .filter_map(|x| async move { std::result::Result::ok(x) })
             .for_each(|_| futures::future::ready(()))
             .boxed();
 
-        (Self { state }, join(drainer, ns_watcher))
+        (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
     }
 
     pub async fn state(&self) -> State {

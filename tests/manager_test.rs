@@ -92,6 +92,68 @@ async fn test_sync_secret(ctx: &mut K8sContext) {
 #[test_context(K8sContext)]
 #[tokio::test]
 #[serial]
+async fn test_sync_configmap(ctx: &mut K8sContext) {
+    let ns1 = ctx.create_namespace("test1", "loc=a").await;
+    let ns2 = ctx.create_namespace("test2", "loc=b").await;
+
+    let ns1_configmaps: Api<ConfigMap> = Api::namespaced(ctx.client(), &ns1.name());
+    let ns2_configmaps: Api<ConfigMap> = Api::namespaced(ctx.client(), &ns2.name());
+
+    // Test creating secret
+    let secret = &ctx.configmap("test")
+        .sync_selector("loc=b")
+        .data(&json!({ "data": "data" }))
+        .create(&ns1_configmaps).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    let synced_secret = ns2_configmaps.get(&secret.name()).await.unwrap();
+    assert_eq!(
+        synced_secret.data.and_then(|x| { x.get("data").cloned() }),
+        Some("data".to_owned()));
+
+    // Test updating secret to delete from NS
+    ns1_configmaps.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "annotations": {
+                "kustd.zdatainc.com/sync": "loc=c"
+            }
+        }
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_configmaps.get(&secret.name()).await,
+        Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
+    ));
+
+    // Test updating secret to create in NS
+    ns1_configmaps.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "ConfigMap",
+        "metadata": {
+            "annotations": {
+                "kustd.zdatainc.com/sync": "loc=b"
+            }
+        }
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_configmaps.get(&secret.name()).await,
+        Ok(_)
+    ));
+
+    // Test deleting secret
+    ns1_configmaps.delete(&secret.name(), &DeleteParams::default()).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_configmaps.get(&secret.name()).await,
+        Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
+    ));
+}
+
+#[test_context(K8sContext)]
+#[tokio::test]
+#[serial]
 async fn test_sync_ns(ctx: &mut K8sContext) {
     let ns1 = ctx.create_namespace("test1", "loc=a").await;
     let ns2 = ctx.create_namespace("test2", "loc=b").await;

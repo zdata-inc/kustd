@@ -7,7 +7,7 @@ Kustd is a simple Kubernetes operator which synchronizes secrets between
 namespaces.
 
 Installation
-------------
+---
 
 ```
 helm repo add kustd https://zdata-inc.github.io/kustd
@@ -15,8 +15,15 @@ helm repo update
 helm upgrade --install --namespace kube-system kustd kustd/kustd
 ```
 
+Run tests
+---
+
+```
+kind create cluster
+```
+
 Usage
------
+---
 
 ```
 # Create some namespaces with labels
