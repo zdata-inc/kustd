@@ -1,23 +1,23 @@
 use std::collections::HashMap;
+use std::fmt::Debug;
 use std::time::Duration;
+use std::marker::PhantomData;
 use either::Either;
 use futures::{stream::FuturesUnordered, StreamExt};
 use kube::{
     Api, Client, ResourceExt,
     core::{DynamicObject, ApiResource},
-    api::{
-        DeleteParams,
-        PostParams,
-    }
+    api::{DeleteParams, PostParams}
 };
 use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Pod, Secret};
+use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{json, Value as JsonValue};
 use tokio::time;
 
 use test_context::AsyncTestContext;
 pub use test_context::test_context;
 
-use kustd::manager::Manager;
+use kustd::{Manager, syncable::Syncable};
 
 pub struct K8sContext {
     client: Client,
@@ -70,8 +70,12 @@ impl K8sContext {
         ns
     }
 
-    pub fn secret(&self, name: &str) -> SecretBuilder {
-        SecretBuilder::new().name(name)
+    pub fn secret(&self, name: &str) -> ResourceBuilder<Secret> {
+        ResourceBuilder::new().name(name)
+    }
+
+    pub fn configmap(&self, name: &str) -> ResourceBuilder<ConfigMap> {
+        ResourceBuilder::new().name(name)
     }
 
     pub fn mangle_name(&self, suffix: &str) -> String {
@@ -97,12 +101,14 @@ impl AsyncTestContext for K8sContext {
     }
 
     async fn teardown(mut self) {
-        let mut ongoing_deletions = FuturesUnordered::new();
         let client = self.client.clone();
+        let mut ongoing_deletions = FuturesUnordered::new();
         for (api_resource, ns, name) in self.to_cleanup.drain(..) {
-            let api: Api<DynamicObject> = ns.map_or_else(
-                || Api::all_with(client.clone(), &api_resource),
-                |ns| Api::namespaced_with(client.clone(), &ns, &api_resource));
+            let api: Api<DynamicObject> = if let Some(ns) = ns {
+                Api::namespaced_with(client.clone(), &ns, &api_resource)
+            } else {
+                Api::all_with(client.clone(), &api_resource)
+            };
             match api.delete(&name, &DeleteParams::default()).await {
                 Ok(Either::Left(r)) => {
                     ongoing_deletions.push(async move {
@@ -124,17 +130,22 @@ impl AsyncTestContext for K8sContext {
     }
 }
 
-pub struct SecretBuilder {
+pub struct ResourceBuilder<T> {
     json: JsonValue,
+    _phantom: PhantomData<T>
 }
 
-impl SecretBuilder {
+impl<T> ResourceBuilder<T>
+    where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
+{
     pub fn new() -> Self {
-        Self {
+        println!("HIDER: {:?}", T::KIND);
+        ResourceBuilder {
             json: json!({
                 "apiVersion": "v1",
-                "kind": "Secret"
+                "kind": T::KIND
             }),
+            _phantom: PhantomData,
         }
     }
 
@@ -158,21 +169,31 @@ impl SecretBuilder {
         self
     }
 
-    pub fn data(mut self, data: &JsonValue) -> Self {
-        merge_json(&mut self.json, &json!({ "stringData": data }));
-        self
-    }
-
     pub fn patch(mut self, patch: &JsonValue) -> Self {
         merge_json(&mut self.json, patch);
         self
     }
 
-    pub fn make(self) -> Secret {
-        Secret::from(serde_json::from_value(self.json).unwrap())
+    pub fn make(self) -> T {
+        T::from(serde_json::from_value(self.json).unwrap())
     }
-    pub async fn create(self, api: &Api<Secret>) -> Result<Secret, kube::Error> {
+
+    pub async fn create(self, api: &Api<T>) -> Result<T, kube::Error> {
         api.create(&PostParams::default(), &self.make()).await
+    }
+}
+
+impl ResourceBuilder<Secret> {
+    pub fn data(mut self, data: &JsonValue) -> Self {
+        merge_json(&mut self.json, &json!({ "stringData": data }));
+        self
+    }
+}
+
+impl ResourceBuilder<ConfigMap> {
+    pub fn data(mut self, data: &JsonValue) -> Self {
+        merge_json(&mut self.json, &json!({ "data": data }));
+        self
     }
 }
 

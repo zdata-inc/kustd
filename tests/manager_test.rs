@@ -14,11 +14,11 @@ use std::matches;
 use std::time::Duration;
 use kube::{
     ResourceExt,
-    api::{Api, Patch, DeleteParams, PatchParams, PostParams}
+    api::{Api, Patch, DeleteParams, PatchParams}
 };
 use k8s_openapi::{
     ByteString,
-    api::core::v1::{Namespace, Secret}
+    api::core::v1::{Namespace, Secret, ConfigMap}
 };
 use tokio::time;
 use serial_test::serial;
