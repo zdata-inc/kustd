@@ -284,7 +284,6 @@ impl Manager {
         };
 
         let secrets = Api::<Secret>::all(client.clone());
-        // let configmaps = Api::<ConfigMap>::all(client.clone);
 
         let secret_drainer = Controller::new(secrets, ListParams::default())
             .reconcile_all_on(ns_watcher_rx.clone())

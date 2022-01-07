@@ -20,6 +20,9 @@ Run tests
 
 ```
 kind create cluster
+cargo test
+kubectl kuttl test tests/e2e
+kind delete cluster
 ```
 
 Usage
