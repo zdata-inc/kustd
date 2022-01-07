@@ -1,3 +1,4 @@
+# Update the data of the resources and verify it syncs
 ---
 apiVersion: v1
 kind: ConfigMap

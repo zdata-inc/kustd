@@ -1,3 +1,4 @@
+# Update namespace back, verify resources are created in it again
 ---
 apiVersion: v1
 kind: Namespace

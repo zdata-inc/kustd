@@ -1,3 +1,4 @@
+# Update the sync annotation and verify it correctly moves namespaces
 ---
 apiVersion: v1
 kind: ConfigMap

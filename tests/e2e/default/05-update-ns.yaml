@@ -1,3 +1,4 @@
+# Update a namespace, verify resources delete out of it
 ---
 apiVersion: v1
 kind: Namespace

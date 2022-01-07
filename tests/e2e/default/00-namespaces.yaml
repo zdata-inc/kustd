@@ -1,3 +1,4 @@
+# Create initial set of namespaces
 ---
 apiVersion: v1
 kind: Namespace
