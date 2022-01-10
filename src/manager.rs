@@ -53,6 +53,58 @@ impl State {
     }
 }
 
+pub struct Manager {
+    state: Arc<RwLock<State>>,
+}
+
+impl Manager {
+    pub async fn new() -> (Self, impl Future<Output = ((),(), ())>) {
+        let client = Client::try_default().await.expect("Failed to create client");
+        let state = Arc::new(RwLock::new(State::new()));
+        let context = Context::new(Data {
+            client: client.clone(),
+            state: state.clone(),
+        });
+
+        let (ns_watcher_tx, ns_watcher_rx) = broadcast(2);
+        let ns_watcher = {
+            let client = client.clone();
+            async move {
+                let tx = ns_watcher_tx.clone();
+                watcher(Api::<Namespace>::all(client), ListParams::default()).for_each(|_| async {
+                    tx.broadcast(()).await.expect("Failed to reconcile on namespace change");
+                }).await;
+            }
+        };
+
+        let secrets = Api::<Secret>::all(client.clone());
+
+        let secret_drainer = Controller::new(secrets, ListParams::default())
+            .reconcile_all_on(ns_watcher_rx.clone())
+            .shutdown_on_signal()
+            .run(reconcile, error_policy, context.clone())
+            .filter_map(|x| async move { std::result::Result::ok(x) })
+            .for_each(|_| futures::future::ready(()))
+            .boxed();
+
+        let configmaps = Api::<ConfigMap>::all(client.clone());
+
+        let configmap_drainer = Controller::new(configmaps, ListParams::default())
+            .reconcile_all_on(ns_watcher_rx)
+            .shutdown_on_signal()
+            .run(reconcile, error_policy, context)
+            .filter_map(|x| async move { std::result::Result::ok(x) })
+            .for_each(|_| futures::future::ready(()))
+            .boxed();
+
+        (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
+    }
+
+    pub async fn state(&self) -> State {
+        self.state.read().await.clone()
+    }
+}
+
 #[instrument(skip(resource, ctx), fields(trace_id))]
 async fn reconcile<T>(resource: T, ctx: Context<Data>) -> Result<ReconcilerAction>
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
@@ -256,57 +308,5 @@ fn error_policy(error: &Error, _ctx: Context<Data>) -> ReconcilerAction {
     warn!("Reconcile failed: {:?}", error);
     ReconcilerAction {
         requeue_after: Some(Duration::from_secs(60 * 5)),
-    }
-}
-
-pub struct Manager {
-    state: Arc<RwLock<State>>,
-}
-
-impl Manager {
-    pub async fn new() -> (Self, impl Future<Output = ((),(), ())>) {
-        let client = Client::try_default().await.expect("Failed to create client");
-        let state = Arc::new(RwLock::new(State::new()));
-        let context = Context::new(Data {
-            client: client.clone(),
-            state: state.clone(),
-        });
-
-        let (ns_watcher_tx, ns_watcher_rx) = broadcast(2);
-        let ns_watcher = {
-            let client = client.clone();
-            async move {
-                let tx = ns_watcher_tx.clone();
-                watcher(Api::<Namespace>::all(client), ListParams::default()).for_each(|_| async {
-                    tx.broadcast(()).await.expect("Failed to reconcile on namespace change");
-                }).await;
-            }
-        };
-
-        let secrets = Api::<Secret>::all(client.clone());
-
-        let secret_drainer = Controller::new(secrets, ListParams::default())
-            .reconcile_all_on(ns_watcher_rx.clone())
-            .shutdown_on_signal()
-            .run(reconcile, error_policy, context.clone())
-            .filter_map(|x| async move { std::result::Result::ok(x) })
-            .for_each(|_| futures::future::ready(()))
-            .boxed();
-
-        let configmaps = Api::<ConfigMap>::all(client.clone());
-
-        let configmap_drainer = Controller::new(configmaps, ListParams::default())
-            .reconcile_all_on(ns_watcher_rx)
-            .shutdown_on_signal()
-            .run(reconcile, error_policy, context)
-            .filter_map(|x| async move { std::result::Result::ok(x) })
-            .for_each(|_| futures::future::ready(()))
-            .boxed();
-
-        (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
-    }
-
-    pub async fn state(&self) -> State {
-        self.state.read().await.clone()
     }
 }
