@@ -2,6 +2,16 @@ apiVersion: v1
 entries:
   kustd:
   - apiVersion: v2
+    appVersion: v0.5.1
+    created: "2022-01-10T20:12:39.06998964Z"
+    description: A simple Kubernetes controller to syncronize resources across namespaces
+    digest: efdcc7f4257cf89cf68f7a7c7d32c2ee0b9de70d99f9b1a4361ec4e316c0b198
+    name: kustd
+    type: application
+    urls:
+    - https://github.com/zdata-inc/kustd/releases/download/kustd-0.6.1/kustd-0.6.1.tgz
+    version: 0.6.1
+  - apiVersion: v2
     appVersion: v0.5.0
     created: "2022-01-06T18:54:50.944080097Z"
     description: A simple Kubernetes controller to syncronize resources across namespaces
@@ -71,4 +81,4 @@ entries:
     urls:
     - https://github.com/zdata-inc/kustd/releases/download/kustd-0.1.0/kustd-0.1.0.tgz
     version: 0.1.0
-generated: "2022-01-06T18:54:50.944103898Z"
+generated: "2022-01-10T20:12:39.07003014Z"
