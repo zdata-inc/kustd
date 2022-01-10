@@ -77,27 +77,25 @@ impl Manager {
             }
         };
 
-        let secrets = Api::<Secret>::all(client.clone());
-
-        let secret_drainer = Controller::new(secrets, ListParams::default())
-            .reconcile_all_on(ns_watcher_rx.clone())
-            .shutdown_on_signal()
-            .run(reconcile, error_policy, context.clone())
-            .filter_map(|x| async move { std::result::Result::ok(x) })
-            .for_each(|_| futures::future::ready(()))
-            .boxed();
-
-        let configmaps = Api::<ConfigMap>::all(client.clone());
-
-        let configmap_drainer = Controller::new(configmaps, ListParams::default())
-            .reconcile_all_on(ns_watcher_rx)
-            .shutdown_on_signal()
-            .run(reconcile, error_policy, context)
-            .filter_map(|x| async move { std::result::Result::ok(x) })
-            .for_each(|_| futures::future::ready(()))
-            .boxed();
+        let secret_drainer = Self::create_drainer::<Secret>(context.clone(), ns_watcher_rx.clone());
+        let configmap_drainer = Self::create_drainer::<ConfigMap>(context.clone(), ns_watcher_rx.clone());
 
         (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
+    }
+
+    async fn create_drainer<T>(ctx: Context<Data>, ns_watcher_rx: async_broadcast::Receiver<()>) -> ()
+        where T: Syncable + Serialize + DeserializeOwned + Send + Sync + Clone + Debug + 'static
+    {
+        let resources = Api::<T>::all(ctx.get_ref().client.clone());
+
+        Controller::new(resources, ListParams::default())
+            .reconcile_all_on(ns_watcher_rx)
+            .shutdown_on_signal()
+            .run(reconcile, error_policy, ctx)
+            .filter_map(|x| async move { std::result::Result::ok(x) })
+            .for_each(|_| futures::future::ready(()))
+            .boxed()
+            .await
     }
 
     pub async fn state(&self) -> State {
