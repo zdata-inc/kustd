@@ -9,7 +9,7 @@ namespaces.
 Installation
 ---
 
-```
+```bash
 helm repo add kustd https://zdata-inc.github.io/kustd
 helm repo update
 helm upgrade --install --namespace kube-system kustd kustd/kustd
@@ -18,7 +18,7 @@ helm upgrade --install --namespace kube-system kustd kustd/kustd
 Run tests
 ---
 
-```
+```bash
 kind create cluster
 cargo test
 kubectl kuttl test tests/e2e
@@ -28,7 +28,7 @@ kind delete cluster
 Usage
 ---
 
-```
+```bash
 # Create some namespaces with labels
 cat <<'EOF' | kubectl apply -f -
 ---
