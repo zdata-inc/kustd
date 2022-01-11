@@ -4,7 +4,7 @@ use tracing_subscriber::FmtSubscriber;
 
 use kustd::Manager;
 
-#[tokio::main(flavor="current_thread")]
+#[tokio::main(flavor="multi_thread")]
 async fn main() -> kustd::Result<()> {
     let subscriber = FmtSubscriber::builder()
         .with_max_level(Level::INFO)
