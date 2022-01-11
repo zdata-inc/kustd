@@ -2,9 +2,8 @@ use std::iter::FromIterator;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
-use std::future::Future;
 use either::Either;
-use futures::{future::join3, FutureExt, StreamExt};
+use futures::{join, FutureExt, StreamExt};
 use tracing::{debug, error, info, instrument, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use tokio::sync::RwLock;
@@ -58,12 +57,16 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub async fn new() -> (Self, impl Future<Output = ((),(), ())>) {
-        let client = Client::try_default().await.expect("Failed to create client");
+    pub async fn new() -> Self {
         let state = Arc::new(RwLock::new(State::new()));
+        Self { state }
+    }
+
+    pub async fn start(&self) {
+        let client = Client::try_default().await.expect("Failed to create client");
         let context = Context::new(Data {
             client: client.clone(),
-            state: state.clone(),
+            state: self.state.clone(),
         });
 
         let (ns_watcher_tx, ns_watcher_rx) = broadcast(2);
@@ -80,7 +83,7 @@ impl Manager {
         let secret_drainer = Self::create_drainer::<Secret>(context.clone(), ns_watcher_rx.clone());
         let configmap_drainer = Self::create_drainer::<ConfigMap>(context.clone(), ns_watcher_rx.clone());
 
-        (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
+        join!(secret_drainer, configmap_drainer, ns_watcher);
     }
 
     async fn create_drainer<T>(ctx: Context<Data>, ns_watcher_rx: async_broadcast::Receiver<()>) -> ()
@@ -110,12 +113,6 @@ async fn reconcile<T>(resource: T, ctx: Context<Data>) -> Result<ReconcilerActio
     let client = ctx.get_ref().client.clone();
     ctx.get_ref().state.write().await.last_event = Utc::now();
 
-    // let reporter = ctx.get_ref().state.read().await.reporter.clone();
-    // let recorder = Recorder::new(client.clone(), reporter, secret.object_ref(&()));
-    // let name = ResourceExt::name(&secret);
-    // let namespace = ResourceExt::namespace(&secret).expect("secret must be namespaced");
-    // let secrets: Api<Secret> = Api::namespaced(client.clone(), &namespace);
-
     let name = resource.name();
     let namespace = resource.namespace().expect("Secret must be namespaced");
 
@@ -133,8 +130,8 @@ async fn reconcile_resource<T>(client: Client, resource: T) -> Result<Reconciler
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
     let namespace = resource.namespace().expect("resource must be namespaced");
-
     let api: Api<T> = Api::namespaced(client.clone(), &namespace);
+
     Ok(finalizer(&api, "kustd.zdatainc.com/cleanup", resource, |event| async {
         match event {
             Event::Apply(resource) => {
@@ -234,7 +231,7 @@ async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
     Ok(())
 }
 
-/// Converts a managed resource into a syncable resource
+/// Converts a managed resource into a resource which can be copied to other namespaces.
 async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<T>
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
@@ -304,7 +301,7 @@ async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Resul
 }
 
 fn error_policy(error: &Error, _ctx: Context<Data>) -> ReconcilerAction {
-    warn!("Reconcile failed: {:?}", error);
+    error!("Reconcile failed: {:?}", error);
     ReconcilerAction {
         requeue_after: Some(Duration::from_secs(60 * 5)),
     }
