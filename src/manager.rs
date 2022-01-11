@@ -156,17 +156,18 @@ async fn destination_namespaces<T>(client: Client, resource: &T) -> Result<Vec<N
     let name = resource.name();
     let namespace = resource.namespace().expect("secret must be namespaced");
     let selector = resource.annotations().get(KUSTD_SYNC_ANN).expect("Can't accept resource without sync annotation.");
-
     let api: Api<Namespace> = Api::all(client);
+
     let mut params = ListParams::default();
     if !selector.is_empty() {
         params = params.labels(selector);
     }
 
-    let result = api.list(&params).await.map_err(Error::KubeError)?;
+    let result = api.list(&params).await?;
     if result.items.len() == 0 {
         warn!("Given label selector {} for resource {}/{} matched no namespaces", selector, namespace, name);
     }
+
     Ok(Vec::<Namespace>::from_iter(result))
 }
 
@@ -184,8 +185,8 @@ async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
     // Find all synced copies, delete any not in dest_namespaces
     // TODO - Replace with searching controller store?
     for resource in Api::<T>::all(client.clone())
-        .list(&ListParams::default()).await
-        .map_err(Error::KubeError)?.iter().filter(|r| {
+        .list(&ListParams::default()).await?
+        .iter().filter(|r| {
             r.annotations().get(KUSTD_ORIGIN_NAME) == Some(&name) &&
             r.annotations().get(KUSTD_ORIGIN_NAMESPACE) == Some(&namespace) &&
             r.namespace().map_or(false, |ns| !dest_namespaces.contains(&ns))
@@ -214,13 +215,13 @@ async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
             // Update
             Ok(_) => {
                 info!("Updating resource {}/{} in {}", namespace, name, dest_ns);
-                api.replace(&name, &PostParams::default(), &new_resource).await.map_err(Error::KubeError)?;
+                api.replace(&name, &PostParams::default(), &new_resource).await?;
             }
 
             // Create
             Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
                 info!("Creating resource {}/{} in {}", namespace, name, dest_ns);
-                api.create(&PostParams::default(), &new_resource).await.map_err(Error::KubeError)?;
+                api.create(&PostParams::default(), &new_resource).await?;
             }
 
             // Unexpected kube error

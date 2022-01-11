@@ -9,6 +9,12 @@ pub enum Error {
     SerializationError(#[source] serde_json::Error),
 }
 
+impl From<kube::Error> for Error {
+    fn from(error: kube::Error) -> Self {
+        Error::KubeError(error)
+    }
+}
+
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 pub mod manager;
