@@ -62,7 +62,7 @@ impl Manager {
         Self { state }
     }
 
-    pub async fn start(&self) {
+    pub async fn start(self) {
         let client = Client::try_default().await.expect("Failed to create client");
         let context = Context::new(Data {
             client: client.clone(),

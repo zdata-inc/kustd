@@ -13,6 +13,8 @@ use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Pod, Secret};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{json, Value as JsonValue};
 use tokio::time;
+use tracing::Level;
+use tracing_subscriber::FmtSubscriber;
 
 use test_context::AsyncTestContext;
 pub use test_context::test_context;
@@ -21,7 +23,6 @@ use kustd::{Manager, syncable::Syncable};
 
 pub struct K8sContext {
     client: Client,
-    manager: Manager,
     random: String,
     // ApiReource, namespace, name
     to_cleanup: Vec<(ApiResource, Option<String>, String)>,
@@ -29,12 +30,18 @@ pub struct K8sContext {
 
 impl K8sContext {
     pub async fn new() -> Self {
-        let (manager, future) = Manager::new().await;
-        tokio::task::spawn(future);
+        let subscriber = FmtSubscriber::builder()
+            .with_max_level(Level::INFO)
+            .finish();
+
+        tracing::subscriber::set_global_default(subscriber)
+            .expect("setting default subscriber failed");
+
+        let manager = Manager::new().await;
+        tokio::task::spawn(manager.start());
 
         Self {
             client: get_client().await,
-            manager,
             random: Self::gen_random(6),
             to_cleanup: Vec::new(),
         }
