@@ -21,7 +21,6 @@ use kustd::{Manager, syncable::Syncable};
 
 pub struct K8sContext {
     client: Client,
-    manager: Manager,
     random: String,
     // ApiReource, namespace, name
     to_cleanup: Vec<(ApiResource, Option<String>, String)>,
@@ -29,12 +28,11 @@ pub struct K8sContext {
 
 impl K8sContext {
     pub async fn new() -> Self {
-        let (manager, future) = Manager::new().await;
-        tokio::task::spawn(future);
+        let manager = Manager::new().await;
+        tokio::task::spawn(manager.start());
 
         Self {
             client: get_client().await,
-            manager,
             random: Self::gen_random(6),
             to_cleanup: Vec::new(),
         }
