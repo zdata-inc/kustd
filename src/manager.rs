@@ -2,11 +2,11 @@ use std::iter::FromIterator;
 use std::fmt::Debug;
 use std::sync::Arc;
 use std::time::Duration;
+use std::future::Future;
 use either::Either;
-use futures::{join, FutureExt, StreamExt};
+use futures::{future::join3, FutureExt, StreamExt};
 use tracing::{debug, error, info, instrument, warn};
 use serde::{de::DeserializeOwned, Serialize};
-use tokio::task;
 use tokio::sync::RwLock;
 use async_broadcast::broadcast;
 use chrono::prelude::*;
@@ -58,16 +58,12 @@ pub struct Manager {
 }
 
 impl Manager {
-    pub async fn new() -> Self {
-        let state = Arc::new(RwLock::new(State::new()));
-        Self { state }
-    }
-
-    pub async fn start(self) {
+    pub async fn new() -> (Self, impl Future<Output = ((),(), ())>) {
         let client = Client::try_default().await.expect("Failed to create client");
+        let state = Arc::new(RwLock::new(State::new()));
         let context = Context::new(Data {
             client: client.clone(),
-            state: self.state,
+            state: state.clone(),
         });
 
         let (ns_watcher_tx, ns_watcher_rx) = broadcast(2);
@@ -84,7 +80,7 @@ impl Manager {
         let secret_drainer = Self::create_drainer::<Secret>(context.clone(), ns_watcher_rx.clone());
         let configmap_drainer = Self::create_drainer::<ConfigMap>(context.clone(), ns_watcher_rx.clone());
 
-        join!(task::spawn(ns_watcher), secret_drainer, configmap_drainer);
+        (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
     }
 
     async fn create_drainer<T>(ctx: Context<Data>, ns_watcher_rx: async_broadcast::Receiver<()>) -> ()

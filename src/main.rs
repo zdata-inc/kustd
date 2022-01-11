@@ -13,8 +13,8 @@ async fn main() -> kustd::Result<()> {
     tracing::subscriber::set_global_default(subscriber)
         .expect("setting default subscriber failed");
 
-    let manager = Manager::new().await;
-    manager.start().await;
+    let (_manager, future) = Manager::new().await;
+    future.await;
 
     Ok(())
 }
