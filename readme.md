@@ -21,6 +21,15 @@ Run tests
 ```bash
 kind create cluster
 cargo test
+kind delete cluster
+```
+
+### End to end tests
+```bash
+docker build -t kustd:latest .
+kind create cluster
+kind load docker-image kustd:latest
+helm install -n kube-system kustd ./charts/kustd
 kubectl kuttl test tests/e2e
 kind delete cluster
 ```
