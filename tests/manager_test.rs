@@ -27,6 +27,11 @@ use serde_json::json;
 mod common;
 use common::{test_context, K8sContext};
 
+#[ctor::ctor]
+fn init_log() {
+    let _ = env_logger::builder().is_test(true).init();
+}
+
 #[test_context(K8sContext)]
 #[tokio::test]
 #[serial]
