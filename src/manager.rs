@@ -164,11 +164,16 @@ async fn destination_namespaces<T>(client: Client, resource: &T) -> Result<Vec<N
     }
 
     let result = api.list(&params).await?;
-    if result.items.len() == 0 {
+    let mut namespaces = Vec::<Namespace>::from_iter(result);
+
+    // Remove namespace resource is currently in
+    namespaces.retain(|x| x.name() != namespace);
+
+    if namespaces.len() == 0 {
         warn!("Given label selector {} for resource {}/{} matched no namespaces", selector, namespace, name);
     }
 
-    Ok(Vec::<Namespace>::from_iter(result))
+    Ok(namespaces)
 }
 
 async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
