@@ -657,7 +657,7 @@ dependencies = [
 
 [[package]]
 name = "kustd"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "async-broadcast",
  "async-trait",
