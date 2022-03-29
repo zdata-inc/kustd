@@ -14,3 +14,12 @@ metadata:
   namespace: kustd-test-b
 data:
   data: YmxhaA==
+---
+apiVersion: v1
+kind: Secret
+type: kubernetes.io/dockerconfigjson
+metadata:
+  name: kustd-sync-registry-test
+  namespace: kustd-test-b
+data:
+  .dockerconfigjson: eyJhdXRocyI6eyJ0ZXN0Ijp7InVzZXJuYW1lIjoidGVzdCIsInBhc3N3b3JkIjoidGVzdCIsImF1dGgiOiJkR1Z6ZERwMFpYTjAifX19

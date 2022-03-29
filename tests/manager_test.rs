@@ -92,6 +92,77 @@ async fn test_sync_secret(ctx: &mut K8sContext) {
 #[test_context(K8sContext)]
 #[tokio::test]
 #[serial]
+async fn test_sync_dockerconfig_secret(ctx: &mut K8sContext) {
+    let ns1 = ctx.create_namespace("test1", "loc=a").await;
+    let ns2 = ctx.create_namespace("test2", "loc=b").await;
+
+    let dockerconfigjson = "eyJhdXRocyI6eyJ0ZXN0Ijp7InVzZXJuYW1lIjoidGVzdCIsInBhc3N3b3JkIjoidGVzdCIsImF1dGgiOiJkR1Z6ZERwMFpYTjAifX19";
+
+    let ns1_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns1.name());
+    let ns2_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns2.name());
+
+    // Test creating secret
+    let secret = &ctx.secret("test")
+        .type_("kubernetes.io/dockerconfigjson")
+        .sync_selector("loc=b")
+        .data_b(&json!({ ".dockerconfigjson": dockerconfigjson }))
+        .create(&ns1_secrets).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    let synced_secret = ns2_secrets.get(&secret.name()).await.unwrap();
+    assert_eq!(
+        synced_secret.data.and_then(|x| { x.get(".dockerconfigjson").cloned() }),
+        Some(ByteString(base64::decode(dockerconfigjson.as_bytes().to_vec()).unwrap())));
+    assert_eq!(
+        synced_secret.type_,
+        Some("kubernetes.io/dockerconfigjson".to_string()));
+
+    // Test updating secret to delete from NS
+    ns1_secrets.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "type": "kubernetes.io/dockerconfigjson",
+        "metadata": {
+            "annotations": {
+                "kustd.zdatainc.com/sync": "loc=c"
+            }
+        }
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_secrets.get(&secret.name()).await,
+        Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
+    ));
+
+    // Test updating secret to create in NS
+    ns1_secrets.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "type": "kubernetes.io/dockerconfigjson",
+        "metadata": {
+            "annotations": {
+                "kustd.zdatainc.com/sync": "loc=b"
+            }
+        },
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_secrets.get(&secret.name()).await,
+        Ok(_)
+    ));
+
+    // Test deleting secret
+    ns1_secrets.delete(&secret.name(), &DeleteParams::default()).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_secrets.get(&secret.name()).await,
+        Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
+    ));
+}
+
+
+#[test_context(K8sContext)]
+#[tokio::test]
+#[serial]
 async fn test_sync_configmap(ctx: &mut K8sContext) {
     let ns1 = ctx.create_namespace("test1", "loc=a").await;
     let ns2 = ctx.create_namespace("test2", "loc=b").await;
