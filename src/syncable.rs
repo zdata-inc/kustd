@@ -10,6 +10,7 @@ pub trait Syncable where Self: Metadata<Ty=ObjectMeta> {
 impl Syncable for Secret {
     fn duplicate(&self) -> Self {
         let mut new_resource = Self::default();
+        new_resource.type_ = self.type_.clone();
         new_resource.meta_mut().name = Some(self.name());
         new_resource.meta_mut().namespace = self.namespace();
         new_resource.meta_mut().annotations = Some(self.annotations().clone());
