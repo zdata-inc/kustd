@@ -175,7 +175,7 @@ async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
     where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
 {
     let name = source_resource.name();
-    let namespace = source_resource.namespace().expect("secret must be namespaced");
+    let namespace = source_resource.namespace().expect("Resource must be namespaced");
     debug!("Synchronizing resource {}/{}", namespace, name);
 
     let new_resource = managed_to_synced_resource(source_resource).await?;
