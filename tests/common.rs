@@ -157,6 +157,13 @@ impl<T> ResourceBuilder<T>
         self
     }
 
+    pub fn type_(mut self, type_: &str) -> Self {
+        merge_json(&mut self.json, &json!({
+            "type": type_
+        }));
+        self
+    }
+
     pub fn sync_selector(mut self, sync_selector: &str) -> Self {
         merge_json(&mut self.json, &json!({
             "metadata": {
@@ -185,6 +192,10 @@ impl<T> ResourceBuilder<T>
 impl ResourceBuilder<Secret> {
     pub fn data(mut self, data: &JsonValue) -> Self {
         merge_json(&mut self.json, &json!({ "stringData": data }));
+        self
+    }
+    pub fn data_b(mut self, data: &JsonValue) -> Self {
+        merge_json(&mut self.json, &json!({ "data": data }));
         self
     }
 }

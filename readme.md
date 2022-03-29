@@ -29,7 +29,8 @@ kind delete cluster
 docker build -t kustd:latest .
 kind create cluster
 kind load docker-image kustd:latest
-helm install -n kube-system kustd ./charts/kustd
+helm upgrade --install -n kube-system kustd ./charts/kustd \
+  --set image.repository=kustd,image.tag=latest
 kubectl kuttl test tests/e2e
 kind delete cluster
 ```
