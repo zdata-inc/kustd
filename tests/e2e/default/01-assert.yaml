@@ -17,6 +17,30 @@ data:
 ---
 apiVersion: v1
 kind: Secret
+metadata:
+  name: kustd-sync-all-test
+  namespace: kustd-test-a
+  annotations:
+    kustd.zdatainc.com/sync: ""
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kustd-sync-all-test
+  namespace: kustd-test-b
+data:
+  data: YmxhaA==
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kustd-sync-all-test
+  namespace: kustd-test-c
+data:
+  data: YmxhaA==
+---
+apiVersion: v1
+kind: Secret
 type: kubernetes.io/dockerconfigjson
 metadata:
   name: kustd-sync-registry-test

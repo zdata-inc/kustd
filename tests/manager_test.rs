@@ -18,6 +18,7 @@ use kube::{
 };
 use k8s_openapi::{
     ByteString,
+    Metadata,
     api::core::v1::{Namespace, Secret, ConfigMap}
 };
 use tokio::time;
@@ -148,6 +149,87 @@ async fn test_sync_dockerconfig_secret(ctx: &mut K8sContext) {
                 "kustd.zdatainc.com/sync": "loc=b"
             }
         },
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_secrets.get(&secret.name()).await,
+        Ok(_)
+    ));
+
+    // Test deleting secret
+    ns1_secrets.delete(&secret.name(), &DeleteParams::default()).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_secrets.get(&secret.name()).await,
+        Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
+    ));
+}
+
+#[test_context(K8sContext)]
+#[tokio::test]
+#[serial]
+async fn test_sync_secret_all_ns(ctx: &mut K8sContext) {
+    let ns1 = ctx.create_namespace("test1", "loc=a").await;
+    let ns2 = ctx.create_namespace("test2", "loc=b").await;
+
+    let ns1_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns1.name());
+    let ns2_secrets: Api<Secret> = Api::namespaced(ctx.client(), &ns2.name());
+
+    // Test creating secret
+    let secret = &ctx.secret("test-sync-all")
+        .sync_selector("")
+        .data(&json!({ "data": "data" }))
+        .create(&ns1_secrets).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+
+    let orig_secret = ns1_secrets.get(&secret.name()).await.unwrap();
+    // Ensure original secret doesn't get overwritten during sync
+    assert_eq!(orig_secret.metadata().annotations, secret.metadata().annotations);
+
+    let synced_secret = ns2_secrets.get(&secret.name()).await.unwrap();
+    assert_eq!(
+        synced_secret.data.clone().and_then(|x| { x.get("data").cloned() }),
+        Some(ByteString("data".as_bytes().to_vec())));
+
+    // Test updating secret change data
+    ns1_secrets.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "stringData": {
+            "data": "data2"
+        }
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    let synced_secret = ns2_secrets.get(&secret.name()).await.unwrap();
+    assert_eq!(
+        synced_secret.data.and_then(|x| { x.get("data").cloned() }),
+        Some(ByteString("data2".as_bytes().to_vec())));
+
+    // Test updating secret to delete from NS
+    ns1_secrets.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "annotations": {
+                "kustd.zdatainc.com/sync": "loc=c"
+            }
+        }
+    }))).await.unwrap();
+    time::sleep(Duration::from_millis(100)).await;
+    assert!(matches!(
+        ns2_secrets.get(&secret.name()).await,
+        Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. }))
+    ));
+
+    // Test updating secret to create in NS
+    ns1_secrets.patch(&secret.name(), &PatchParams::apply("kustd").force(), &Patch::Apply(json!({
+        "apiVersion": "v1",
+        "kind": "Secret",
+        "metadata": {
+            "annotations": {
+                "kustd.zdatainc.com/sync": ""
+            }
+        }
     }))).await.unwrap();
     time::sleep(Duration::from_millis(100)).await;
     assert!(matches!(

@@ -14,3 +14,11 @@ metadata:
   namespace: kustd-test-c
 data:
   data: YmxhaA==
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: kustd-sync-all-test
+  namespace: kustd-test-a
+  annotations:
+    kustd.zdatainc.com/origin.name: "kustd-sync-all-test"
