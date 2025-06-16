@@ -106,6 +106,32 @@ kubectl delete secret test
 kubectl delete ns prod-backend prod-frontend
 ```
 
+
+Other examples:
+---
+
+```yaml
+---
+kind: Secret
+metadata:
+  annotations:
+    # Deploy to namespace with needs-secret, no matter the value of the label
+    kustd.zdatainc.com/sync: "needs-secret"
+---
+kind: Namespace
+metadata:
+  labels:
+    needs-secret: ""
+
+
+---
+kind: Secret
+metadata:
+  annotations:
+    kustd.zdatainc.com/sync: "" # Sync to all namespaces
+```
+
+
 Available annotations
 ---------------------
 
