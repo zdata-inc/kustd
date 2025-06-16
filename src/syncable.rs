@@ -1,16 +1,22 @@
-use k8s_openapi::{Metadata, api::core::v1::{ConfigMap, Secret}};
-use kube::api::{Resource, ResourceExt, ObjectMeta};
+use k8s_openapi::{
+    api::core::v1::{ConfigMap, Secret},
+    Metadata,
+};
+use kube::api::{ObjectMeta, Resource, ResourceExt};
 
 /// Implemented for k8s_openapi resources which can be synced between namespaces.
-pub trait Syncable where Self: Metadata<Ty=ObjectMeta> {
+pub trait Syncable
+where
+    Self: Metadata<Ty = ObjectMeta>,
+{
     /// Creates a new resource, only cloning critical data from the original.
     fn duplicate(&self) -> Self;
 }
 
 impl Syncable for Secret {
     fn duplicate(&self) -> Self {
-        let mut new_resource = Self::default();
-        new_resource.type_ = self.type_.clone();
+        let mut new_resource = Self { type_: self.type_.clone(), ..Default::default() };
+
         new_resource.meta_mut().name = Some(self.name());
         new_resource.meta_mut().namespace = self.namespace();
         new_resource.meta_mut().annotations = Some(self.annotations().clone());
