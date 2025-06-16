@@ -248,7 +248,14 @@ where
         let api = Api::<T>::namespaced(client.clone(), &dest_ns);
         match api.get(&name).await {
             // Update
-            Ok(_) => {
+            Ok(orig_resource) => {
+                let mut new_resource = new_resource.clone();
+
+                // Ensure no writes happen between fetch and replacement
+                if let Some(resource_version) = orig_resource.resource_version() {
+                    new_resource.metadata_mut().resource_version.replace(resource_version);
+                }
+
                 info!("Updating resource {}/{} in {}", namespace, name, dest_ns);
                 api.replace(&name, &PostParams::default(), &new_resource).await?;
             }
