@@ -2,26 +2,26 @@ use async_broadcast::broadcast;
 use chrono::prelude::*;
 use either::Either;
 use futures::{future::join3, FutureExt, StreamExt};
-use k8s_openapi::{
-    api::core::v1::{ConfigMap, Namespace, Secret},
-    Metadata,
-};
+use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Secret};
 use kube::{
-    api::{Api, DeleteParams, ListParams, ObjectMeta, PostParams, Resource, ResourceExt},
+    api::{Api, DeleteParams, ListParams, PostParams, Resource, ResourceExt},
     client::Client,
     runtime::{
-        controller::{Context, Controller, ReconcilerAction},
+        controller::{Action, Controller},
         events::Reporter,
         finalizer::{finalizer, Event},
-        watcher,
+        watcher::Config,
     },
 };
+
+use kube::runtime::watcher;
+
 use serde::{de::DeserializeOwned, Serialize};
 use std::fmt::Debug;
-use std::future::Future;
 use std::iter::FromIterator;
 use std::sync::Arc;
 use std::time::Duration;
+use std::{default::Default, future::Future};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info, instrument, warn};
 
@@ -36,7 +36,7 @@ const KUSTD_REMOVE_LABELS_ANN: &str = "kustd.zdatainc.com/remove-labels";
 
 struct Data {
     client: Client,
-    state: Arc<RwLock<State>>,
+    state: RwLock<State>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -54,21 +54,21 @@ impl State {
 }
 
 pub struct Manager {
-    state: Arc<RwLock<State>>,
+    ctx: Arc<Data>,
 }
 
 impl Manager {
     pub async fn new() -> (Self, impl Future<Output = ((), (), ())>) {
         let client = Client::try_default().await.expect("Failed to create client");
-        let state = Arc::new(RwLock::new(State::new()));
-        let context = Context::new(Data { client: client.clone(), state: state.clone() });
+        let state = RwLock::new(State::new());
+        let context = Arc::new(Data { client: client.clone(), state });
 
         let (ns_watcher_tx, ns_watcher_rx) = broadcast(2);
         let ns_watcher = {
             let client = client.clone();
             async move {
                 let tx = ns_watcher_tx.clone();
-                watcher(Api::<Namespace>::all(client), ListParams::default())
+                watcher(Api::<Namespace>::all(client), Config::default())
                     .for_each(|_| async {
                         tx.broadcast(()).await.expect("Failed to reconcile on namespace change");
                     })
@@ -80,16 +80,16 @@ impl Manager {
         let configmap_drainer =
             Self::create_drainer::<ConfigMap>(context.clone(), ns_watcher_rx.clone());
 
-        (Self { state }, join3(secret_drainer, configmap_drainer, ns_watcher))
+        (Self { ctx: context }, join3(secret_drainer, configmap_drainer, ns_watcher))
     }
 
-    async fn create_drainer<T>(ctx: Context<Data>, ns_watcher_rx: async_broadcast::Receiver<()>)
+    async fn create_drainer<T>(ctx: Arc<Data>, ns_watcher_rx: async_broadcast::Receiver<()>)
     where
         T: Syncable + Serialize + DeserializeOwned + Send + Sync + Clone + Debug + 'static,
     {
-        let resources = Api::<T>::all(ctx.get_ref().client.clone());
+        let resources = Api::<T>::all(ctx.client.clone());
 
-        Controller::new(resources, ListParams::default())
+        Controller::new(resources, Config::default())
             .reconcile_all_on(ns_watcher_rx)
             .shutdown_on_signal()
             .run(reconcile, error_policy, ctx)
@@ -100,17 +100,17 @@ impl Manager {
     }
 
     pub async fn state(&self) -> State {
-        self.state.read().await.clone()
+        self.ctx.state.read().await.clone()
     }
 }
 
 #[instrument(skip(resource, ctx), fields(trace_id))]
-async fn reconcile<T>(resource: T, ctx: Context<Data>) -> Result<ReconcilerAction>
+async fn reconcile<T>(resource: Arc<T>, ctx: Arc<Data>) -> Result<Action>
 where
     T: Syncable + Serialize + DeserializeOwned + Clone + Debug,
 {
-    let client = ctx.get_ref().client.clone();
-    ctx.get_ref().state.write().await.last_event = Utc::now();
+    let client = ctx.client.clone();
+    ctx.state.write().await.last_event = Utc::now();
 
     // let reporter = ctx.get_ref().state.read().await.reporter.clone();
     // let recorder = Recorder::new(client.clone(), reporter, secret.object_ref(&()));
@@ -118,12 +118,12 @@ where
     // let namespace = ResourceExt::namespace(&secret).expect("secret must be namespaced");
     // let secrets: Api<Secret> = Api::namespaced(client.clone(), &namespace);
 
-    let name = resource.name();
+    let name = resource.name_any();
     let namespace = resource.namespace().expect("Secret must be namespaced");
 
     if !resource.annotations().contains_key(KUSTD_SYNC_ANN) {
         debug!("Skipping resource, no sync annotation {}/{}", namespace, name);
-        return Ok(ReconcilerAction { requeue_after: None });
+        return Ok(Action::requeue(Duration::from_secs(2)));
     }
 
     debug!("Reconciling resource {}/{}", namespace, name);
@@ -131,7 +131,7 @@ where
     reconcile_resource(client.clone(), resource).await
 }
 
-async fn reconcile_resource<T>(client: Client, resource: T) -> Result<ReconcilerAction>
+async fn reconcile_resource<T>(client: Client, resource: Arc<T>) -> Result<Action>
 where
     T: Syncable + Serialize + DeserializeOwned + Clone + Debug,
 {
@@ -141,29 +141,24 @@ where
     Ok(finalizer(&api, "kustd.zdatainc.com/cleanup", resource, |event| async {
         match event {
             Event::Apply(resource) => {
-                sync_resource(client.clone(), &resource).await?;
-                Result::<_, Error>::Ok(ReconcilerAction {
-                    requeue_after: Some(Duration::from_secs(60 * 60)),
-                })
+                sync_resource(client.clone(), &*resource).await?;
+                Result::<_, Error>::Ok(Action::requeue(Duration::from_secs(60 * 5)))
             }
             Event::Cleanup(resource) => {
-                sync_deleted_resource(&client, &resource).await?;
-                Result::<_, Error>::Ok(ReconcilerAction {
-                    requeue_after: Some(Duration::from_secs(60 * 60)),
-                })
+                sync_deleted_resource(&client, &*resource).await?;
+                Result::<_, Error>::Ok(Action::requeue(Duration::from_secs(60 * 5)))
             }
         }
     })
-    .await
-    .unwrap())
+    .await?)
 }
 
 /// Given a resource, return the namespaces it should be synchronized into.
 async fn destination_namespaces<T>(client: Client, resource: &T) -> Result<Vec<Namespace>>
 where
-    T: Metadata<Ty = ObjectMeta>,
+    T: Resource,
 {
-    let name = resource.name();
+    let name = resource.name_any();
     let namespace = resource.namespace().expect("secret must be namespaced");
     let selector = resource
         .annotations()
@@ -180,7 +175,7 @@ where
     let mut namespaces = Vec::<Namespace>::from_iter(result);
 
     // Remove namespace resource is currently in
-    namespaces.retain(|x| x.name() != namespace);
+    namespaces.retain(|x| x.name_any() != namespace);
 
     if namespaces.is_empty() {
         warn!(
@@ -196,7 +191,7 @@ async fn sync_resource<T>(client: Client, source_resource: &T) -> Result<()>
 where
     T: Syncable + Serialize + DeserializeOwned + Clone + Debug,
 {
-    let name = source_resource.name();
+    let name = source_resource.name_any();
     let namespace = source_resource.namespace().expect("Resource must be namespaced");
     debug!("Synchronizing resource {}/{}", namespace, name);
 
@@ -205,7 +200,7 @@ where
     let dest_namespaces: Vec<_> = destination_namespaces(client.clone(), source_resource)
         .await?
         .iter()
-        .map(|ns| ns.name())
+        .map(|ns| ns.name_any())
         .collect();
 
     // Find all synced copies, delete any not in dest_namespaces
@@ -221,7 +216,7 @@ where
             client.clone(),
             &resource.namespace().expect("Resource must be namespaced"),
         );
-        match api.delete(&resource.name(), &DeleteParams::default()).await {
+        match api.delete(&resource.name_any(), &DeleteParams::default()).await {
             Ok(Either::Left(_)) => {
                 info!("Deleted resource {}/{}", namespace, name);
             }
@@ -253,7 +248,7 @@ where
 
                 // Ensure no writes happen between fetch and replacement
                 if let Some(resource_version) = orig_resource.resource_version() {
-                    new_resource.metadata_mut().resource_version.replace(resource_version);
+                    new_resource.meta_mut().resource_version.replace(resource_version);
                 }
 
                 info!("Updating resource {}/{} in {}", namespace, name, dest_ns);
@@ -279,9 +274,9 @@ where
 /// Converts a managed resource into a syncable resource
 async fn managed_to_synced_resource<T>(source_resource: &T) -> Result<T>
 where
-    T: Syncable + Serialize + DeserializeOwned + Clone + Debug,
+    T: Syncable + Resource + Serialize + DeserializeOwned + Clone + Debug,
 {
-    let name = source_resource.name();
+    let name = source_resource.name_any();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
 
     let mut new_resource = source_resource.duplicate();
@@ -318,33 +313,33 @@ where
 
 async fn sync_deleted_resource<T>(client: &Client, source_resource: &T) -> Result<()>
 where
-    T: Metadata<Ty = ObjectMeta> + Serialize + DeserializeOwned + Clone + Debug,
+    T: Syncable + Serialize + DeserializeOwned + Clone + Debug,
 {
-    let name = source_resource.name();
+    let name = source_resource.name_any();
     let namespace = source_resource.namespace().expect("secret must be namespaced");
 
     let dest_namespaces = destination_namespaces(client.clone(), source_resource).await?;
 
     for ns in dest_namespaces.iter() {
-        let api: Api<T> = Api::namespaced_with(client.clone(), &ns.name(), &());
+        let api: Api<T> = Api::<T>::namespaced(client.clone(), &ns.name_any());
         match api.delete(&name, &DeleteParams::default()).await {
             Ok(Either::Left(_)) => {
-                info!("Deleted resource {}/{}", ns.name(), name);
+                info!("Deleted resource {}/{}", ns.name_any(), name);
             }
             Ok(Either::Right(_)) => {
-                info!("Deleting resource {}/{}", ns.name(), name);
+                info!("Deleting resource {}/{}", ns.name_any(), name);
             }
             Err(kube::Error::Api(kube::core::ErrorResponse { code: 404, .. })) => {
                 warn!(
                     "Unable to cleanup synchronized resource {}/{}, it does not exist.",
-                    ns.name(),
+                    ns.name_any(),
                     name
                 );
             }
             Err(err) => {
                 error!(
                     "Unable to cleanup synchronized resource {}, {}, {:?}",
-                    ns.name(),
+                    ns.name_any(),
                     name,
                     err
                 );
@@ -356,7 +351,7 @@ where
     Ok(())
 }
 
-fn error_policy(error: &Error, _ctx: Context<Data>) -> ReconcilerAction {
+fn error_policy<T>(_obj: Arc<T>, error: &Error, _ctx: Arc<Data>) -> Action {
     warn!("Reconcile failed: {:?}", error);
-    ReconcilerAction { requeue_after: Some(Duration::from_secs(60 * 5)) }
+    Action::requeue(Duration::from_secs(20))
 }

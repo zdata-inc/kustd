@@ -1,27 +1,29 @@
-use std::collections::HashMap;
-use std::fmt::Debug;
-use std::time::Duration;
-use std::marker::PhantomData;
 use either::Either;
 use futures::{stream::FuturesUnordered, StreamExt};
+use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Secret};
 use kube::{
+    api::{DeleteParams, PostParams},
+    core::{ApiResource, DynamicObject},
     Api, Client, ResourceExt,
-    core::{DynamicObject, ApiResource},
-    api::{DeleteParams, PostParams}
 };
-use k8s_openapi::api::core::v1::{ConfigMap, Namespace, Pod, Secret};
-use serde::{Serialize, de::DeserializeOwned};
+use rand::distr::{Alphanumeric, SampleString};
+use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{json, Value as JsonValue};
+use std::collections::HashMap;
+use std::fmt::Debug;
+use std::marker::PhantomData;
+use std::time::Duration;
 use tokio::time;
+use tracing::info;
 
-use test_context::AsyncTestContext;
 pub use test_context::test_context;
+use test_context::AsyncTestContext;
 
-use kustd::{Manager, syncable::Syncable};
+use kustd::{syncable::Syncable, Manager};
 
 pub struct K8sContext {
     client: Client,
-    manager: Manager,
+    _manager: Manager,
     random: String,
     // ApiReource, namespace, name
     to_cleanup: Vec<(ApiResource, Option<String>, String)>,
@@ -29,12 +31,12 @@ pub struct K8sContext {
 
 impl K8sContext {
     pub async fn new() -> Self {
-        let (manager, future) = Manager::new().await;
+        let (_manager, future) = Manager::new().await;
         tokio::task::spawn(future);
 
         Self {
             client: get_client().await,
-            manager,
+            _manager,
             random: Self::gen_random(6),
             to_cleanup: Vec::new(),
         }
@@ -46,7 +48,7 @@ impl K8sContext {
 
     pub async fn create_namespace(&mut self, name: &str, labels: &str) -> Namespace {
         let namespaces: Api<Namespace> = Api::all(self.client());
-        namespaces.create(&PostParams::default(), &self.namespace(&name, labels)).await.unwrap()
+        namespaces.create(&PostParams::default(), &self.namespace(name, labels)).await.unwrap()
     }
 
     pub fn namespace(&mut self, name: &str, labels: &str) -> Namespace {
@@ -56,17 +58,18 @@ impl K8sContext {
             split_labels.insert(split.next().unwrap(), split.next().unwrap());
         }
 
-        let ns = Namespace::from(serde_json::from_value(json!({
+        let ns: Namespace = serde_json::from_value(json!({
             "apiVersion": "v1",
             "kind": "Namespace",
             "metadata": {
                 "name": self.mangle_name(name),
                 "labels": split_labels,
             },
-        })).unwrap());
+        }))
+        .unwrap();
 
         let api_resource = ApiResource::erase::<Namespace>(&());
-        self.to_cleanup.push((api_resource, None, ns.name().to_owned()));
+        self.to_cleanup.push((api_resource, None, ns.name_any().to_owned()));
         ns
     }
 
@@ -83,18 +86,10 @@ impl K8sContext {
     }
 
     fn gen_random(len: usize) -> String {
-        use rand::{thread_rng, Rng};
-        use rand::distributions::Alphanumeric;
-        thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(len)
-            .map(char::from)
-            .collect::<String>()
-            .to_lowercase()
+        Alphanumeric.sample_string(&mut rand::rng(), len).to_lowercase()
     }
 }
 
-#[async_trait::async_trait]
 impl AsyncTestContext for K8sContext {
     async fn setup() -> Self {
         Self::new().await
@@ -112,13 +107,14 @@ impl AsyncTestContext for K8sContext {
             match api.delete(&name, &DeleteParams::default()).await {
                 Ok(Either::Left(r)) => {
                     ongoing_deletions.push(async move {
-                        let name = r.name().clone();
-                        while let Ok(_) = api.get(&name).await {
+                        let name = r.name_any().clone();
+                        while api.get(&name).await.is_ok() {
                             time::sleep(Duration::from_millis(100)).await;
                         }
+                        info!("{} deleted", r.name_any());
                     });
-                },
-                Ok(Either::Right(_)) => { }
+                }
+                Ok(Either::Right(_)) => {}
                 Err(err) => {
                     eprintln!("Failed to cleanup K8s resource: {:?}", err);
                 }
@@ -126,52 +122,63 @@ impl AsyncTestContext for K8sContext {
         }
 
         // Wait for deletions to finish
-        while let Some(_) = ongoing_deletions.next().await { }
+        while ongoing_deletions.next().await.is_some() {}
     }
 }
 
+#[derive(Default)]
 pub struct ResourceBuilder<T> {
     json: JsonValue,
-    _phantom: PhantomData<T>
+    _phantom: PhantomData<T>,
 }
 
 impl<T> ResourceBuilder<T>
-    where T: Syncable + Serialize + DeserializeOwned + Clone + Debug
+where
+    T: Syncable + Serialize + DeserializeOwned + Clone + Debug,
 {
     pub fn new() -> Self {
         ResourceBuilder {
             json: json!({
                 "apiVersion": "v1",
-                "kind": T::KIND
+                "kind": T::kind(&())
             }),
             _phantom: PhantomData,
         }
     }
 
     pub fn name(mut self, name: &str) -> Self {
-        merge_json(&mut self.json, &json!({
-            "metadata": {
-                "name": name.to_owned(),
-            }
-        }));
+        merge_json(
+            &mut self.json,
+            &json!({
+                "metadata": {
+                    "name": name.to_owned(),
+                }
+            }),
+        );
         self
     }
 
     pub fn type_(mut self, type_: &str) -> Self {
-        merge_json(&mut self.json, &json!({
-            "type": type_
-        }));
+        merge_json(
+            &mut self.json,
+            &json!({
+                "type": type_
+            }),
+        );
         self
     }
 
     pub fn sync_selector(mut self, sync_selector: &str) -> Self {
-        merge_json(&mut self.json, &json!({
-            "metadata": {
-                "annotations": {
-                    "kustd.zdatainc.com/sync": sync_selector
+        merge_json(
+            &mut self.json,
+            &json!({
+                "metadata": {
+                    "annotations": {
+                        "kustd.zdatainc.com/sync": sync_selector
+                    }
                 }
-            }
-        }));
+            }),
+        );
         self
     }
 
@@ -181,7 +188,7 @@ impl<T> ResourceBuilder<T>
     }
 
     pub fn make(self) -> T {
-        T::from(serde_json::from_value(self.json).unwrap())
+        serde_json::from_value(self.json).unwrap()
     }
 
     pub async fn create(self, api: &Api<T>) -> Result<T, kube::Error> {
@@ -213,7 +220,7 @@ pub async fn get_client() -> Client {
 
 fn merge_json(a: &mut JsonValue, b: &JsonValue) {
     match (a, b) {
-        (&mut JsonValue::Object(ref mut a), &JsonValue::Object(ref b)) => {
+        (&mut JsonValue::Object(ref mut a), JsonValue::Object(b)) => {
             for (k, v) in b {
                 merge_json(a.entry(k.clone()).or_insert(JsonValue::Null), v);
             }
