@@ -11,6 +11,7 @@ use kube::{
         events::Reporter,
         finalizer::{finalizer, Event},
         watcher::Config,
+        WatchStreamExt,
     },
 };
 
@@ -69,8 +70,13 @@ impl Manager {
             async move {
                 let tx = ns_watcher_tx.clone();
                 watcher(Api::<Namespace>::all(client), watcher::Config::default())
-                    .for_each(|evt| async {
-                        if let Ok(watcher::Event::Apply(_obj)) = evt {
+                    .applied_objects()
+                    .for_each(|obj| async {
+                        if let Ok(obj) = obj {
+                            info!(
+                                "Reconciling all objects because namespace '{}' changed",
+                                obj.name_any()
+                            );
                             tx.broadcast(())
                                 .await
                                 .expect("Failed to reconcile on namespace change");
