@@ -68,9 +68,13 @@ impl Manager {
             let client = client.clone();
             async move {
                 let tx = ns_watcher_tx.clone();
-                watcher(Api::<Namespace>::all(client), Config::default())
-                    .for_each(|_| async {
-                        tx.broadcast(()).await.expect("Failed to reconcile on namespace change");
+                watcher(Api::<Namespace>::all(client), watcher::Config::default())
+                    .for_each(|evt| async {
+                        if let Ok(watcher::Event::Apply(_obj)) = evt {
+                            tx.broadcast(())
+                                .await
+                                .expect("Failed to reconcile on namespace change");
+                        }
                     })
                     .await;
             }
